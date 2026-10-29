@@ -1,0 +1,431 @@
+---
+title: "Stage 03: SNP Genotyping with MiniMap2"
+subtitle: "`r paste0('Dataset: ', params$dataset_name, ' - ', params$n_barcodes, ' barcodes')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: hide
+    df_print: kable
+    highlight: tango
+    theme:
+      version: 5
+      bg: "#FFFFFF"
+      fg: "#2E2A26"
+      primary: "#657359"
+      secondary: "#8B775F"
+      base_font: "Times New Roman"
+      heading_font: "Times New Roman"
+      headings-font-weight: 700
+      code_font:
+        google: "JetBrains Mono"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+params:
+  # Dataset
+  dataset_name: "small" # or "big"
+  n_barcodes: 6 # or 24
+
+  #Shared input file paths, manual input
+  barcode_map_path: "Data/Supporting_data/Samples_ONT_barcodes.tsv"
+  primer_panel_path: "Data/Supporting_data/Primer_panels/12864_2021_7761_MOESM12_ESM_filtered.xlsx"
+  reference_path: "Data/Supporting_data/Genome_reference_data/snps_500bp_sequences.fa" # 1000 bp widened SNP references
+
+  # Your paths to tools for MiniMap2 and samtools
+  minimap2_bin_folder: ""
+  samtools_bin_folder: ""
+
+  # Genotype calling, shared with ASP genotyping
+  minimum_required_depth: 3 # minimum reads to attempt a genotype call
+  HT_min_frequence: 0.20 #minimum MAF to call it HT
+  min_snp_quality: 10 # bases below this Phred Q are not counted (mpileup -Q), same threshold as ASP genotyping
+
+  # Minimap2 specific settings
+  pad: 50 # padded extra bases for more context
+  snp_position: 500 # SNP position in reference genome
+  minimum_mapping_quality_threshold: 20 # minimum mapping Q for genotype calling
+---
+
+```{r knitr_options, include = FALSE}
+library(knitr)
+opts_chunk$set(comment = "", message = FALSE)
+```
+
+```{css, echo = FALSE}
+pre, pre code { white-space: pre-wrap; word-break: break-word; }
+.scroll-output { max-height: 250px; overflow-y: auto; }
+```
+
+
+This script uses ObiTools4 obimultiplexed identified sequences across 6 or 24 samples (barcodes), it uses a validated MiniMap2 and samtools software. Before aligning, the script first pads the identified amplicon because MiniMap2 expects longer sequences, trying to align short amplicons to reference CanFam3 genome would be a lot harder and would produce worse results (tested). Even with that, parameters are set to compensate for short amplicons, a fix for this specific problem was found on GitHub (tested without as well). SNP position is set on 500th base.
+
+After completing this script, move on to 04_SNP_Genotyping_ASP_primer.Rmd
+
+## Libraries, settings, paths and basic setup 
+Settings, paths, helper functions and a timing function for speed optimization analysis.
+
+```{r setup}
+suppressMessages({
+  library(readxl)
+  library(dplyr)
+  library(readr)
+})
+
+# Settings come from the params block in the YAML header, this turns them into usable variables
+invisible(list2env(params, envir = environment()))
+
+output_folder_name_master <- file.path("Results", dataset_name, "Genotypes_results") 
+dir.create(output_folder_name_master, showWarnings = FALSE, recursive = TRUE)
+output_folder_name_minimap2 <- file.path("Results", dataset_name, "Genotypes_results/MiniMap2_genotypes")  
+dir.create(output_folder_name_minimap2, showWarnings = FALSE, recursive = TRUE)
+output_folder_name_bam <- file.path("Data/Processed_data", dataset_name, "Demultiplexed_sequence_data/Minimap2_BAM_files")
+dir.create(output_folder_name_bam, showWarnings = FALSE, recursive = TRUE)
+output_folder_name_padded <- file.path("Data/Processed_data", dataset_name, "Demultiplexed_sequence_data/Identified_padded_sample_sequences")
+dir.create(output_folder_name_padded, showWarnings = FALSE, recursive = TRUE)
+
+# Settings used each run saved directly inside the output folder, useful for reproducibility
+settings_used <- data.frame(setting = c("run_date", names(params)),
+                            value = c(format(Sys.time(), "%Y-%m-%d %H:%M"),
+                                      vapply(params, function(setting_value) paste(setting_value, collapse = ", "), character(1))))
+write.table(settings_used, file.path(output_folder_name_minimap2, "settings_used_03.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
+
+panel_for_filtering <- read_excel(primer_panel_path, sheet = "Final panel", .name_repair = "unique_quiet") %>%
+  select(locus = "SNP name",
+         asp1_seq = "ASP1_SEQ (forward allele1)",
+         asp2_seq = "ASP2_SEQ (forward allele2)") %>%
+  filter(!is.na(asp1_seq), !is.na(asp2_seq))
+
+# Loads reference genome sequences
+fasta_lines <- readLines(reference_path)
+full_header <- sub("^>", "", fasta_lines[grepl("^>", fasta_lines)])
+full_header <- full_header[sapply(strsplit(full_header, "::"), `[`, 1) %in% panel_for_filtering$locus] #filter for only 33 markers
+
+
+# Finds minimap2 and samtools on any Mac/Linux computer, YAML folder first, then the terminal PATH
+login_shell_path <- tryCatch(system2(Sys.getenv("SHELL", "/bin/zsh"), c("-ilc", shQuote("echo $PATH")), stdout = TRUE, stderr = FALSE, timeout = 10),
+                             error = function(e) "", warning = function(w) "") # PATH from the user's terminal settings
+tool_search_folders <- unique(path.expand(c(minimap2_bin_folder, samtools_bin_folder,
+                                            strsplit(tail(c("", login_shell_path), 1), ":")[[1]],
+                                            rev(Sys.glob(path.expand(c("~/*/bin", "~/*/*/bin", "~/*/*/*/bin")))),
+                                            Sys.glob(path.expand(c("~/*conda*/bin", "~/*conda*/envs/*/bin", "~/mambaforge/envs/*/bin"))),
+                                            "/usr/local/bin", "/opt/homebrew/bin", Sys.glob("/opt/*/bin"))))
+needed_tools <- c("minimap2", "samtools")
+tool_files <- sapply(needed_tools, function(tool) {
+  found_in <- tool_search_folders[file.exists(file.path(tool_search_folders, tool))]
+  if (length(found_in) == 0) stop(tool, " not found. Install it (for example brew install ", tool, "), or paste its bin folder into ", tool, "_bin_folder in the YAML")
+  file.path(found_in[1], tool)
+})
+
+minimap2_path <- shQuote(tool_files[["minimap2"]]) # quoted, so a folder name with spaces still works in the system() commands
+samtools_path <- shQuote(tool_files[["samtools"]])
+cat("Using:\n", paste(tool_files, collapse = "\n "), "\n")
+
+barcodes <- sprintf("%02d", 1:n_barcodes)
+barcode_map <- read_tsv(barcode_map_path, show_col_types = FALSE) %>%
+  filter(dataset == dataset_name) %>%
+  mutate(barcode_num = sub("^[A-Za-z]+", "", barcode))
+```
+
+<details><summary>Settings used for this run</summary>
+
+```{r settings_table, echo = FALSE}
+kable(settings_used, row.names = FALSE, col.names = c("Setting", "Value"))
+```
+
+</details>
+
+
+
+## Padding, alignment and genotype calling
+
+This chunk runs through every barcode (sample) and combines results into one genotype table, where each barcode goes through three steps. ObiTools4 Obimultiplex cuts every amplicon or identified read from its found primers, this setting as far as I know can't be undone. Amplicons can cause trouble and in the first runs gave more errors than expected. That's why the padding step was added to the reads. It basically finds the original read from Dorado Demultiplexing with Read ID and position info, cuts out that amplicon again but with extra padding (variable "pad") on both sides (or less if the reads end before that) along with its quality scores. The padded reads are saved inside the Processed_data directory. Next step is alignment with minimap2 "map-ont" mode for Nanopore to the 1000 bp references, centred at 500 bp for each SNP. Settings for shorter fragments found on GitHub were also added, which include: shorter k-mers and windows (-k 7 -w 5) and lower seed and chaining thresholds (-n 1 -m 10). Alignments are then sorted and indexed with samtools and saved inside Data/Processed_data/dataset_name/Demultiplexed_sequence_data/Minimap2_BAM_files The third and last step is genotype calling with samtools mpileup, which collects all bases at the SNP position, but only reads with quality over the "minimum_mapping_quality_threshold" and SNP bases with Phred Q ≥ "min_snp_quality". All the other reads are excluded from genotype calling, for example unmapped, secondary, supplementary, QC failed, duplicate and so on.
+Genotype is called either "no_coverage", "low_depth" (when it holds fewer than "minimum_required_depth" reads) when no genotype is called and "called" (HM or HT, HM when second most common base is below "HT_min_frequency").
+
+```{r MiniMap2_Genotyping, class.output = "scroll-output"}
+# Uploading shared functions
+source("Code/R_scripts/asp_functions.R", local = TRUE)
+
+timing_log <- list()
+
+# Creates names for the Dorado files with simple helper functions 
+dorado_fastq_file_name_f <- function(bc) {
+  sprintf("Data/Processed_data/%s/Demultiplexed_sequence_data/Dorado_demultiplexed_by_sample/barcode%s.fastq",dataset_name, bc)
+  }
+
+identified_file_names_f  <- function(bc) {
+  sprintf("Data/Processed_data/%s/Demultiplexed_sequence_data/Identified_sample_sequences_Obi4/barcode%s_identified.fastq", dataset_name, bc)
+  }
+
+get_actual_sample_name <- function(bc) {
+  bc_num <- sub("^barcode", "", bc)
+  hit <- barcode_map$sample_id[barcode_map$barcode_num == bc_num]
+  if (length(hit) == 1) return(hit)
+  bc
+}
+# This function reads the 5th column from samtools pileup, where every base of the SNP is, and return one base per read. Based on specific character samtools uses it finds the correct base.
+parse_pileup_bases <- function(bases_str, ref_base) {
+  chars <- strsplit(bases_str, "")[[1]] # Split and return a vector
+  observed <- character(0) #empty character vector
+  i <- 1
+  n <- length(chars)
+  while (i <= n) {
+    character <- chars[i]
+    if (character == "^") { i <- i + 2; next } #jumps ahead because its just a starting marker
+    if (character == "$") { i <- i + 1; next } #jumps ahead because its just an ending marker
+    if (character == "+" || character == "-") { # Indels, reads the number after the sign then skips that many bases
+      i <- i + 1
+      num_str <- "" # start of digit reading
+      while (i <= n && grepl("[0-9]", chars[i])) { num_str <- paste0(num_str, chars[i]); i <- i + 1 } #reads how many digits it has to jumps over
+      i <- i + as.integer(num_str)
+      next
+    }
+    if (character == "." || character == ",") { observed <- c(observed, toupper(ref_base)); i <- i + 1; next } # matches the reference, the base is the reference base
+    if (grepl("[ACGTacgt]", character)) { observed <- c(observed, toupper(character)); i <- i + 1; next } #changes to upper case, strand is not used
+    i <- i + 1 # anything else is now counted
+  }
+  observed
+}
+
+# Simple genotype caller for the pileup bases, works with the same logic as genotyper for ASP, just a bit simpler.
+call_genotype_pileup <- function(bases) {
+  n <- length(bases)
+  if (n < minimum_required_depth) return(c(genotype = NA, depth = n))
+  tab <- sort(table(bases), decreasing = TRUE)
+  top_base <- names(tab)[1]
+  if (length(tab) == 1 || (tab[2] / n) < HT_min_frequence) {
+    return(c(genotype = paste0(top_base, top_base), depth = n))
+  }
+  alleles <- sort(c(top_base, names(tab)[2]))
+  c(genotype = paste0(alleles[1], alleles[2]), depth = n)
+}
+
+# Per sample padding, aligning, pileup and genotyping
+run_sample <- function(bc) {
+  sample_id <- get_actual_sample_name(paste0("barcode", bc))
+  identified_path <- identified_file_names_f(bc)
+  raw_path <- dorado_fastq_file_name_f(bc)
+
+  #if its missing its skipped
+  if (!file.exists(identified_path) || !file.exists(raw_path)) {
+    return(NULL)
+  }
+
+  # Adding padding
+  t0 <- Sys.time()
+  raw_lines <- readLines(raw_path)
+  raw_ids <- sub("^@", "", sub(" .*$", "", sub("\t.*$", "", raw_lines[seq(1, length(raw_lines), by = 4)]))) # Gets reads IDs
+  raw_seqs <- setNames(raw_lines[seq(2, length(raw_lines), by = 4)], raw_ids) # Makes vector with IDs as names and sequences as values of those names
+  raw_quals <- setNames(raw_lines[seq(4, length(raw_lines), by = 4)], raw_ids) # Same as before but for Q score
+
+  id_lines <- readLines(identified_path) #similar as before
+  id_headers <- id_lines[seq(1, length(id_lines), by = 4)]
+  full_ids_from_identified <- sub("^@", "", id_headers)
+  
+  padded_path <- file.path(output_folder_name_padded, paste0(paste0("barcode", bc), "_padded.fastq"))
+      
+  # Loops through all identified amplicons and add padding                     
+  con <- file(padded_path, "w") # Opens the file for writing padded sequences
+  number_of_processed_reads <- 0
+  
+  for (full_id in full_ids_from_identified) {
+    match <- regmatches(full_id, regexec("(.+)_sub\\[([0-9]+)\\.\\.([0-9]+)\\]", full_id))[[1]] # Cuts the ID and starting and ending positions of amplicons
+    if (length(match) == 0) next
+    original_id <- match[2] #
+    amplicon_start_position <- as.integer(match[3])
+    amplicon_end_position <- as.integer(match[4])
+    original_seq <- raw_seqs[[original_id]] # Looks up full sequences by it's ID 
+    
+    # Calculates padded coordinates
+    if (is.null(original_seq)) next
+    padded_start_position <- max(1, amplicon_start_position - pad + 1) # Makes sure it starts at 1 if amplicon padding is longer than the starting position
+    padded_end_position <- min(nchar(original_seq), amplicon_end_position + pad) # Same check for last ending position
+    # Writes the padded amplicons with its raw qualities as well
+    writeLines(c(paste0("@", full_id), substr(original_seq, padded_start_position, padded_end_position), "+", substr(raw_quals[[original_id]], padded_start_position, padded_end_position)), con)
+    number_of_processed_reads <- number_of_processed_reads + 1
+  }
+  
+  close(con)
+  log_time(sprintf("%s: padding", sample_id), t0)
+# End of padding loop
+  
+  
+### Part 2, aligning, sorting and indexing
+  t0 <- Sys.time()
+  
+  bam_path <- file.path(output_folder_name_bam, paste0(sample_id, ".sorted.bam"))
+  minimap2_log_path <- file.path(output_folder_name_bam, paste0(sample_id, "_minimap2.log"))
+  unsorted_sam_path <- tempfile(fileext = ".sam")
+
+  # Activates system shell command in R. "-ax map-ont" writes the alignments in SAM format and preset for Nanopore reads, "-k 7" seed length it looks for shorter k-mers 7 bases long, "-w 5" minimizer window, "-n 1" chain of matches need at least one seed, "-m 10" minimum chaining score, "-o" output file.
+  minimap2_exit_status <- system(sprintf(
+    "%s -ax map-ont -k 7 -w 5 -n 1 -m 10 -o %s %s %s 2> %s",
+    minimap2_path, # Placeholders for %s
+    shQuote(unsorted_sam_path),
+    shQuote(reference_path), 
+    shQuote(padded_path), 
+    shQuote(minimap2_log_path)
+  ))
+  # This part checks for errors and sorts the SAM file from Minimap2, it reorders alignments by reference, output is sorted.bam, and deletes (unlink()) the temporary file
+  if (minimap2_exit_status != 0) stop(sprintf("%s: minimap2 failed, see %s", sample_id, minimap2_log_path))
+  sort_exit_status <- system(sprintf("%s sort -o %s %s", samtools_path, shQuote(bam_path), shQuote(unsorted_sam_path)))
+  unlink(unsorted_sam_path)
+  
+  # Checks for samtools errors and creates indexed bam.bai files
+  if (sort_exit_status != 0) stop(sprintf("%s: samtools sort failed", sample_id))
+  index_exit_status <- system(sprintf("%s index %s", 
+                 samtools_path, 
+                 shQuote(bam_path)))
+  
+  if (index_exit_status != 0) stop(sprintf("%s: samtools index failed", sample_id))
+  log_time(sprintf("%s: minimap2 align+sort+index", sample_id), t0)
+
+  n_mapped <- as.integer(system(sprintf("%s view -c -F 0x904 %s", # Option -F 0x904 counts only primary alignments of mapped reads
+                                        samtools_path, 
+                                        bam_path), 
+                                        intern = TRUE)) # Returns it as a character string
+  
+  n_total  <- as.integer(system(sprintf("%s view -c -F 0x900 %s", # Counts total reads
+                                        samtools_path, 
+                                        bam_path), 
+                                        intern = TRUE)) 
+  
+   cat(sprintf("%s: mapped %d / %d fragments (%.1f%%)\n", sample_id, n_mapped, n_total, 100 * n_mapped / n_total))
+
+   mapq_values <- as.integer(system(sprintf("%s view -F 0x904 %s | cut -f5", # Cuts the fifth column with Q scores
+                                           samtools_path, 
+                                           bam_path), 
+                                           intern = TRUE))
+  
+mapping_row <- data.frame(sample = sample_id,
+                            fragments = n_total,
+                            mapped = n_mapped,
+                            mapped_percent = round(100 * n_mapped / n_total, 1),
+                            mapq_median = median(mapq_values),
+                            mapq_mean = round(mean(mapq_values), 1),
+                            mapq_pass_percent = round(100 * mean(mapq_values >= minimum_mapping_quality_threshold), 1))
+
+### Part 3, pileup and genotype calling per locus
+  t0 <- Sys.time()
+
+  # Loops over loci by header (loci names)
+  results <- list()
+    for (header in full_header) {
+    locus <- strsplit(header, "::")[[1]][1]
+    region <- sprintf("%s:%d-%d", header, snp_position, snp_position) # Grabs the positions
+  
+    # "-B" doesn't lower base qualities near indels (BAQ), that would throw away many reads. "-d 0" no limit for the number of reads (by default it stops at a few thousands reads), "-q %d" filter only for reads with minimum mapping quality set as a cutoff at the start. "-Q %d"filter only bases with SNP quality more than the cutoff assigned at the start. "-ff and text" drops the reads with those flags, "-f" reference path, "-r" only the SNP position
+    command <- sprintf("%s mpileup -B -d 0 -q %d -Q %d --ff UNMAP,SECONDARY,QCFAIL,DUP,SUPPLEMENTARY -f %s -r %s %s 2>/dev/null",
+                    samtools_path, minimum_mapping_quality_threshold, min_snp_quality,
+                    shQuote(reference_path), shQuote(region), shQuote(bam_path))
+  
+    # In case of warnings it writes an empty character vector
+    out <- tryCatch(system(command, intern = TRUE), warning = function(w) character(0), error = function(e) character(0))
+  
+    # Created data frame for errors which returned nothing
+    if (length(out) == 0) {
+      results[[locus]] <- data.frame(barcode = sample_id, 
+                                    locus = locus,
+                                    genotype = NA_character_, 
+                                    depth = 0L,
+                                    status = "no_coverage")
+      next
+    }
+    # Creates data frame for errors which returned faulty output
+    fields <- strsplit(out[1], "\t")[[1]]
+    if (length(fields) < 5) {
+      results[[locus]] <- data.frame(barcode = sample_id,
+                                    locus = locus,
+                                    genotype = NA_character_,
+                                    depth = 0L,
+                                    status = "no_coverage")
+      next
+    }
+  
+    # Creates actual results table with a called genotype 
+    bases <- parse_pileup_bases(fields[5], fields[3])
+    result <- call_genotype_pileup(bases)
+    depth_val <- as.integer(result["depth"])
+    status_val <- if (is.na(result["genotype"])) "low_depth" else "called"
+  
+    results[[locus]] <- data.frame(
+      barcode = sample_id, 
+      locus = locus,
+      genotype = result["genotype"], 
+      depth = depth_val,
+      status = status_val)
+    }
+  # Combining all the results
+  log_time(sprintf("%s: pileup+genotype (%d loci)", sample_id, length(full_header)), t0)
+  genotype_table <- do.call(rbind, results)
+  
+  write_tsv(genotype_table, file.path(output_folder_name_bam, paste0(sample_id, "_minimap2_genotypes.tsv")))
+
+  list(genotypes = genotype_table, mapping = mapping_row)
+}
+# End of the genotyping loop
+
+# Run every sample, combine results
+all_results <- lapply(barcodes, run_sample)
+combined <- bind_rows(lapply(all_results, "[[", "genotypes")) # the genotype table of every sample
+mapping_summary <- bind_rows(lapply(all_results, "[[", "mapping")) # one mapping row per sample
+write_tsv(mapping_summary, file.path(output_folder_name_minimap2, "mapping_summary_03.tsv"))
+
+write_tsv(combined, file.path(output_folder_name_minimap2, "all_barcodes_Minimap2_genotypes.tsv"))
+```
+
+```{r Mapping_Summary}
+kable(mapping_summary, col.names = c("Sample", "Fragments", "Mapped", "Mapped (%)", "MAPQ median", "MAPQ mean",
+                                     sprintf("MAPQ ≥ %d (%%)", minimum_mapping_quality_threshold)))
+```
+
+
+## Timing Summary
+
+```{r, Timing Summary}
+timing_df <- do.call(rbind, timing_log)
+write_tsv(timing_df, file.path(output_folder_name_minimap2, "timing_breakdown.tsv"))
+
+# quick summary, total time per step and per locus
+timing_df$step_type <- sub(".*: ", "", timing_df$step) 
+timing_summary <- aggregate(seconds ~ step_type, data = timing_df, sum)
+timing_summary$seconds <- round(timing_summary$seconds, 2)
+timing_summary
+```
+
+
+
+## Genotyping Summary
+
+```{r, Genotyping Summary}
+# Overall summary across all samples, number and % of called, no_coverage and low_depth genotypes across all samples and loci
+status_counts <- combined %>%
+  count(status) %>%
+  mutate(percent = round(100 * n / sum(n), 1)) %>%
+  mutate(status = recode(status, called = "Called", low_depth = "Below minimum depth", no_coverage = "No reads"))
+kable(status_counts, col.names = c("Status", "Sample-locus pairs", "Percent"))
+
+# call rate per sample
+call_rate_per_sample <- combined %>%
+  group_by(sample = barcode) %>%
+  summarise(called = sum(status == "called"),
+            total = n(),
+            call_rate = round(100 * called / total, 1))
+  kable(call_rate_per_sample, col.names = c("Sample", "Called loci", "Total loci", "Call rate (%)"))
+```
+
+
+
+## Reproducibility
+
+<details><summary>Session info and tool versions</summary>
+
+```{r session_info}
+sessionInfo()
+# versions of the command line tools used in this stage, recorded in the report for reproducibility
+cat("minimap2:", system(paste(minimap2_path, "--version 2>&1"), intern = TRUE)[1], "\n")
+cat("samtools:", system(paste(samtools_path, "--version 2>&1"), intern = TRUE)[1], "\n")
+```
+
+</details>
+

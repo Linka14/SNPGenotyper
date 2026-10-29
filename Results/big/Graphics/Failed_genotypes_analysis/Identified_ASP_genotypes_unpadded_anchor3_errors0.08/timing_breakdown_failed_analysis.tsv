@@ -1,0 +1,12 @@
+step	seconds
+read: voting reads of 5 pairs (42 reads)	7.25
+align: W215207.r1 / BICF2P223300 (7 reads)	0.69
+ggsave: W215207.r1 / BICF2P223300 (7 reads plotted)	0.47
+align: W215208.r1 / BICF2P223300 (10 reads)	0.43
+ggsave: W215208.r1 / BICF2P223300 (10 reads plotted)	0.32
+align: W215214 / BICF2P57528 (13 reads)	0.47
+ggsave: W215214 / BICF2P57528 (13 reads plotted)	0.51
+align: W215220 / BICF2P878735 (3 reads)	0.35
+ggsave: W215220 / BICF2P878735 (3 reads plotted)	0.28
+align: W215214.r1 / BICF2S2305942 (9 reads)	0.46
+ggsave: W215214.r1 / BICF2S2305942 (9 reads plotted)	0.33

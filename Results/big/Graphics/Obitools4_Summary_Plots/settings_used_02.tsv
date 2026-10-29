@@ -1,0 +1,6 @@
+setting	value
+run_date	2026-10-29 15:48
+dataset_name	big
+n_barcodes	24
+obitools_bin_folder	
+barcode_map_path	Data/Supporting_data/Samples_ONT_barcodes.tsv

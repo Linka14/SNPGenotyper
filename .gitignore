@@ -1,0 +1,55 @@
+# R and RStudio
+.Rproj.user/
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+.Renviron
+
+# Knitted reports and their helper folders
+*_cache/
+*_files/
+
+# Compiled Stan models and other R data files
+*.rds
+
+# Data and results
+Data/Raw_data/**
+!Data/Raw_data/**/
+!Data/Raw_data/**/README.md
+Data/Processed_data/
+Results/**
+# ...except files from earlier runs that some plots need
+!Results/**/
+!Results/*/Graphics/**
+Results/*/Graphics/**/downsampled_calls.tsv
+!Results/*/Genotypes_results/old/Identified_ASP_genotypes/*/*timing_log*.tsv
+
+# Small dataset results
+Results/small/**
+!Results/small/**/
+!Results/small/Genotypes_results/old/Identified_ASP_genotypes/*/*timing_log*.tsv
+
+# Sequencing files anywhere in the project
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+*.bam
+*.bai
+*.sam
+*.pod5
+*.fast5
+
+# Office lock files (made while an Excel or Word file is open)
+~$*
+
+# Old README format
+Readme.rtf
+
+# Always ignored, even inside folders let through above
+.DS_Store
+.Rhistory
+.Rapp.history
+.RData
+~$*

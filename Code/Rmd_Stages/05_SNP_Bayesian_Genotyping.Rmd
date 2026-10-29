@@ -1,0 +1,1123 @@
+---
+title: "Bayesian Genotyping"
+subtitle: "`r paste0('Dataset: ', params$dataset_name)`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: hide
+    df_print: kable
+    highlight: tango
+    theme:
+      version: 5
+      bg: "#FFFFFF"
+      fg: "#2E2A26"
+      primary: "#657359"
+      secondary: "#8B775F"
+      base_font: "Times New Roman"
+      heading_font: "Times New Roman"
+      headings-font-weight: 700
+      code_font:
+        google: "JetBrains Mono"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+params:
+  # Dataset
+  dataset_name: "big" # or "big"
+  n_cores: 4 # number of cores
+
+  # Primer panel path
+  primer_panel_path: "Data/Supporting_data/Primer_panels/12864_2021_7761_MOESM12_ESM_filtered.xlsx"
+
+  # What to run
+  run_stan: TRUE # runs Bayes model
+  run_downsampling: TRUE # runs downsampling and calibration statistics (needs run_stan: TRUE in the same run)
+  run_downsampling_plots: TRUE # runs visualisations (from this run, or from the saved run with the same settings)
+  
+  # Input reads and primers settings
+  input_type: "unpadded" # "padded" or "unpadded"
+  use_anchors: true
+  anchor_length: 3
+  probe_type: "asp_primers" # "asp_primers" or "reference"
+  threshold_type: "errors" # "fraction" or "errors"
+  min_score_fraction: 0.65 # "fraction" only
+  error_rate: 0.08 # "errors" only
+
+  # Inputs for call_genotype() function
+  minimum_required_depth: 3 # minimum reads required to accept it for further genotyping
+  HT_min_frequence: 0.20 # minor allele must be larger or equal to call HT
+
+  # Inputs for strand check filter or flag
+  strand_flag_prob: 0.01 # strand check, a direction needs at least 8 reads before its flagged
+  expected_minor_fraction: 0.44 # derived from data (or 0.5)
+  strand_downgrade: false # false = strand check only flags it, true = HT is changed to HM
+
+  # Genotype prior
+  prior_type: "flat" # "flat" = 1/3 each genotype, "het_share" = one heterozygote share for every pair, "hwe" = locus specific HWE priors from the primer panel
+  prior_het_share: 0.15 # only for prior_type = "het_share": prior probability of a heterozygote (the two homozygotes share the rest)
+  prior_population: "FreqWOLF_all" # only used when prior_type == "hwe": FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT, FreqWOLF_IB, FreqDOG
+  prior_floor: 0.001 # floors for allele frequency
+  ancestry_prior_shape: 1 # only for prior_type = "ancestry": Beta(shape, shape) prior on wolf ancestry, 1 = uniform, 0.5 = leans to pure animals
+  phi_hom_structure: "shared" # homozygote overdispersion: "shared" (one value), "locus", "sample" or "locus_sample"
+  
+  # Inputs for Stan sampling
+  stan_iter: 4000 # longer run, mu_error mixes slowly, this brings its Rhat under 1.01
+  stan_warmup: 1500
+  stan_chains: 4
+  stan_adapt_delta: 0.95 # smaller steps, avoids divergences in hierarchical models
+  max_error: 0.10 # cap on any error rate, stops "homozygotes" turning into 50/50 heterozygotes
+
+  # Downsampling and genotype confidence calibration
+  read_depths_to_test: [3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 40, 50, 75]
+  draws_per_depth: 300 # random draws per pair and read depth
+  minimum_reads_for_truth_pair: 75 # a pair needs at least this many reads, so even the deepest draws are real subsamples
+  bootstrap_rounds: 1000 # bootstrap datasets for the confidence bands
+---
+
+```{r, knitr_options, include = FALSE}
+library(knitr)
+opts_chunk$set(comment = "", message = FALSE, class.output = "scroll-output")
+```
+
+```{css, echo = FALSE}
+pre, pre code { white-space: pre-wrap; word-break: break-word; }
+.scroll-output { max-height: 250px; overflow-y: auto; }
+```
+
+
+This is still a work in progress script, not yet final! All the necessary ASP function are loaded from asp_functions.R script
+
+After completing this script, move on to 06_Visualisation_of_genototyping_resultsRmd
+
+## Libraries, settings, paths and basic setup 
+
+```{r setup}
+suppressMessages({
+  library(readxl)
+  library(dplyr)
+  library(readr)
+  library(ggplot2)
+  library(scales)
+  library(parallel)
+  library(rstan)
+  library(knitr)
+  library(bayesplot)
+})
+
+# Settings come from the params block in the YAML header, this turns them into usable variables
+invisible(list2env(params, envir = environment()))
+settings_used <- data.frame(setting = c("run_date", names(params)),
+                            value = c(format(Sys.time(), "%Y-%m-%d %H:%M"),
+                                      vapply(params, function(setting_value) paste(setting_value, collapse = ", "), character(1))))
+# Uploading shared functions
+source("Code/R_scripts/asp_functions.R", local = TRUE) 
+
+plot_font <- "Times New Roman"
+theme_set(theme_minimal(base_family = plot_font))
+hm_dark <- "#476F84"
+ht_dark <- "#A4552A"
+correct_colour <- "#72874E" # correct calls, reads used
+error_colour <- "#d73027" # miscalls, incorrect calls, removing cutoffs
+group_colours <- c("All pairs" = "grey25", "True homozygotes" = hm_dark, "True heterozygotes" = ht_dark) 
+
+
+# Folder names are built with a shared function inside asp_functions.R, it gives a unique name based on changed settings for every run. If you use the same settings to rerun it again it gets overwritten. 
+run_names <- build_run_names(input_type, use_anchors, anchor_length, threshold_type, error_rate, min_score_fraction,
+                             prior_type, prior_het_share, prior_population, prior_floor, probe_type = probe_type,
+                             ancestry_prior_shape = ancestry_prior_shape, phi_hom_structure = phi_hom_structure)
+output_folder_name_identified <- file.path("Results", dataset_name, "Genotypes_results", run_names$asp_run_name)
+stopifnot("ASP results folder not found, run 04_SNP_Genotyping_ASP_primer.Rmd first with the same settings" = dir.exists(output_folder_name_identified))
+
+# primer panel, only locus and the two alleles are needed here (copied from 04, without trimming and anchors)
+# the sheet is read once: panel_sheet keeps every column (also the allele frequencies for the HWE prior), panel only the columns needed here
+panel_sheet <- read_excel(primer_panel_path, sheet = "Final panel", .name_repair = "minimal")
+panel <- panel_sheet[, c("SNP name", "Allele 1", "Allele 2", "ASP1_SEQ (forward allele1)", "ASP2_SEQ (forward allele2)")]
+names(panel) <- c("locus", "allele1", "allele2", "asp1_seq", "asp2_seq")
+panel <- panel[!is.na(panel$asp1_seq) & !is.na(panel$asp2_seq), ]
+
+timing_log <- list() # empty timing log, log_time() adds one row per step
+```
+
+
+## Hierarchical model for missclasification rate
+This chunk contains hierarchical base mixture Bayesian genotyper model for identified Obitools reads, it does one stan call for all samples and loci together. It takes the allele counts for every sample locus pair where k = allele1 reads and d = all usable reads, it doesn't run on reads itself just the genotype deciding process. The naive caller uses a fixed rule for every sample locus pair, if MAF reaches over 20 % the pair is called HT otherwise its HM. Where it lacks is that it treats every locus and sample the same way (I get a results, a specific genotype, but I'm not sure how confident that result is, depth 10 and depth 300 genotypes look the same on the end results heatmap). This Stan model is a bit more sophisticated because it goes around this a different way, it asks "given how noisy this one locus sample pair is, how likely are these allele counts under each genotype?". 
+Why use hierarchical? If i want to estimate error rate at each locus i have different ways of computing it on 24 sample and 33 loci. Either with full complete pooling of and treat all loci the same, throw all reads together and compute one global error rate. Its simple, but it lacks nuance. One loci might have a higher error rate because of the homopolymer site right before the SNP position (5 %) and a clean locus could have 0.3 % error rate. One shared value can be too strict or too loose for different loci.
+Second option is without pooling and treat every locus separately on its own reads. This option is completely valid, it removes the previous problem but a new one appears. Not all loci have the same amount of depth and data to work with and when there is not a lot of data to work with each estimate relies too much on pure chance.
+Third option is partial or hierarchical pooling. It treats each loci separately, but still takes in count that they "come from the same background". Loci are related but not exactly identical (same chemistry, sequencer, pipeline). Each locus gets its own error rate, but those rate are assumed to come from one shared distribution (errors rate is about 3 % but they scatter around by some estimated amount). The model learns both those values, typical error rate  and how much loci really differ (mu_error and sigma_error_locus). Each locus gets its own value but it comes from its own data and the families typical value and that ratio of reliance is based on amount of evidence (depth, number of reads) for each locus separately. Lower depth locus relies more on (is pulled more towards) the typical "family" values, and a locus with more informative reads and higher depth is relies more on its own data. 
+The same can happen for samples, one can have a higher error rate because DNA is more degraded. A sample with few reads can borrow from strength from other.
+Error rate is calculated as pair error rate =  typical value +  locus effect + sample effect (mu_error + sigma_error_locus * z_error_locus + sigma_error_sample * z_error_sample). Heterozygote allele balance is pooled the same way. its better for genotyping low depth pairs, they can produce overconfident (0 % or 10 %) and extreme estimates and partial pooling pulls it more towards the shared value which makes GQ more meaningful.
+
+Overdispersion: Model handles it in two ways: which DNA molecules happened to be copied and which happened to be sequenced.
+A simple binomial model would treat reads for a HT (CT) like coin flips. If every read were an independent "coin flip" from DNA, each read would get a fair chance to be 50 % c or T. The more depth and reads you have, lower the dispersion and closer it is to a true 50 50 split. But reads arent really independent, they come from template molecules, which read get mulitiplied in the PCR is random which affects sequences and reads background. Sequencing more reads or having more depth and data doesnt necessarily give a closer true independent state it just gives a better estimate for that specific split that happened during the labratory prep.
+Beta binomial models this with two steps, a true share of copied DNA for specific paris varies at around 50 % (step 1) and the reads are coin flips from that share (step 2). How much step 1 varies is set by phi which can be treated as number of effective templates or molecules. Lower amount of them means more scatter, more of them means it behaves more like  plain binomial. This model fits two of them phi_het for HT with a prior of around 30 molecules and phi_hom and for minor allele reads in HM  with a prior at around 200. With binomials more reads give less scatter, but with betabinomial more reads doesnt neccesarily mean the same thing, scatter levels at around +-9 % because the limit are the molecules not the reads.
+Example: HT with 200 reads (140:60 - 30 % for minor) with binomial that is far away from 5050 split (chance of 0.000002%), model would push it towards HM even though that amount of MAF is not typical for HM. With betabinomial that chance is at around  4 %, rare but not almost impossible. Same example but with  20 reads (14:6), binomial gives it 11.5 % and betabinomial 22 %. 
+Phi_het also has limits set to at least 10. And its the same for all counts for every sample and locus that is not exactly accurate with reality where low DNA sample has fewer molecules than higher quality DNA sample. Downsampling shows HT are overconfident, for which this one shared phi might be the culprit. Pairs with fewer molecules scatter more than phi allows and the model is too   sure about them. That is why an updated model now uses phi_het separated between samples with the same partial pooling.
+
+Allele bias per locus: in theory two allele specific priors per locus should have the same shares  and are present in equal amounts in HT. In practice those two arent identical, one may bind a little better at the end, that primers specific bindings probabilities can be the cause of the MAF and different split between alleles. This model learns the expected HT split for every locus (het_fraction), its partially pooled across loci like the error rate (a locus with only two HT can claim a strong bias with that little amount of information) and it also has safety limits  het_min and 1 - het_min (0.2 to 0.8). This  can change confident HM calls into less confident HM calls or even HT. A lot of information comes from GQ which gives you confidence on the same scale as Phred
+
+```{r Hierarchical_Stan_Genotyping, eval = params$run_stan}
+# Folder name preparation based on previous ASP run and settings used
+settings_suffix_hier <- sub("^Identified_ASP_genotypes_", "", run_names$asp_run_name) # same settings label
+prior_label_hier <- run_names$prior_label
+output_folder_name_hier <- file.path("Results", dataset_name, "Genotypes_results", run_names$bayes_run_name)
+dir.create(output_folder_name_hier, showWarnings = FALSE, recursive = TRUE)
+
+# Settings used each run saved directly inside the output folder, useful for reproducibility
+write.table(settings_used, file.path(output_folder_name_hier, "settings_used.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
+
+# PAth to the stan model, compiled model is saved next to it
+stan_model_path_hier <- "Stan_config/base_mixture_model_hierarchical.stan"
+rstan_options(auto_write = TRUE) 
+mixture_stan_hier_model <- stan_model(stan_model_path_hier)
+
+# Reads from the folder not R memory, reads the result files from ASP genotyper pipeline
+reads_hier <- read_tsv(file.path(output_folder_name_identified, "all_barcodes_asp_reads.tsv"), show_col_types = FALSE,
+                       col_types = cols(called_allele = col_character(), called_allele_raw = col_character(), .default = col_guess()))
+naive_genotypes_hier <- read_tsv(file.path(output_folder_name_identified, "all_barcodes_asp_genotypes.tsv"), show_col_types = FALSE,
+                                 col_types = cols(genotype = col_character(), strand_check = col_character(), .default = col_guess()))
+cat(sprintf("Stan input: %s (%d reads)\n", run_names$asp_run_name, nrow(reads_hier)))
+
+# Allele counts from the scorer function, only reads that passed every filter
+counts_hier <- reads_hier %>%
+  filter(!is.na(called_allele)) %>%
+  left_join(panel[, c("locus", "allele1", "allele2")], by = "locus") %>%
+  group_by(barcode, locus) %>%
+  summarise(k = sum(called_allele == allele1),
+            d = sum(called_allele == allele1 | called_allele == allele2),
+            .groups = "drop") %>%
+  filter(d >= minimum_required_depth)
+
+# Check that the reads and depth are the same
+depth_check_hier <- inner_join(counts_hier, naive_genotypes_hier[, c("barcode", "locus", "depth")], by = c("barcode", "locus"))
+stopifnot("reads and genotypes file are from different ASP runs (Stan depth != ASP depth)" = all(depth_check_hier$d == depth_check_hier$depth),
+          "the fitted pairs are not the ASP-called pairs" = nrow(counts_hier) == sum(naive_genotypes_hier$status == "called"))
+
+samples_hier <- sort(unique(counts_hier$barcode))
+loci_hier <- sort(unique(counts_hier$locus))
+
+# Genotype prior for every locus taken from primer panel when setting is set to "HWE", column taken based on population set
+if (prior_type %in% c("hwe", "ancestry")) {
+  allele1_frequency_hier <- data.frame(
+    locus = panel_sheet[["SNP name"]],
+    frequency = as.numeric(panel_sheet[[match(prior_population, names(panel_sheet))]]), # match() takes the first column with this name = allele 1
+    dog_frequency = as.numeric(panel_sheet[[match("FreqDOG", names(panel_sheet))]])) # dog side, only used by "ancestry"
+}
+
+# This builds the genotype prior for every pair one row per pairs. Prior is chosen from the settings
+pair_prior_hier <- switch(prior_type,
+  flat = matrix(1/3, nrow = nrow(counts_hier), ncol = 3),
+  het_share = matrix(rep(c((1 - prior_het_share) / 2, (1 - prior_het_share) / 2, prior_het_share), each = nrow(counts_hier)), ncol = 3),
+  hwe = {
+    allele1_p <- allele1_frequency_hier$frequency[match(counts_hier$locus, allele1_frequency_hier$locus)]
+    allele1_p <- pmin(pmax(ifelse(is.na(allele1_p), 0.5, allele1_p), prior_floor), 1 - prior_floor) # missing frequency = 0.5, then floored
+    cbind(allele1_p^2, (1 - allele1_p)^2, 2 * allele1_p * (1 - allele1_p)) # Hardy-Weinberg: p^2, q^2, 2pq
+  },
+  ancestry = matrix(1/3, nrow = nrow(counts_hier), ncol = 3)) # placeholder, Stan builds the ancestry prior itself (replaced by the fitted prior after sampling)
+colnames(pair_prior_hier) <- c("prior_hom1", "prior_hom2", "prior_het")
+
+# This list is taken by STAN, this is the data that goes into stan model. Everything is turned into number for stan, because it cant use names fro samples or loci
+stan_data_hier <- list(
+  N = nrow(counts_hier), # number of pairs
+  S = length(samples_hier), # number of samples
+  L = length(loci_hier), # number of loci
+  sample_id = as.integer(factor(counts_hier$barcode, levels = samples_hier)), # Position (indices) of each which sample and locus belongs specific pair
+  locus_id = as.integer(factor(counts_hier$locus, levels = loci_hier)),
+  k = as.integer(counts_hier$k), # reads for allele 1
+  d = as.integer(counts_hier$d), # all filtered reads
+  max_error = max_error, # cap on any error rate
+  het_min = HT_min_frequence, # heterozygote allele1 fraction stays between 0.2 and 0.8 (1 - HT_minor_frequence)
+  pair_prior = unname(pair_prior_hier), # genotype prior for every pair, same order as counts_hier (rows add up to 1), names are removed
+  use_ancestry = as.integer(prior_type == "ancestry"), # 1 = Stan learns a wolf ancestry per sample and builds the prior from it
+  p_wolf = if (prior_type == "ancestry") pmin(pmax(coalesce(allele1_frequency_hier$frequency[match(loci_hier, allele1_frequency_hier$locus)], 0.5), prior_floor), 1 - prior_floor) else rep(0.5, length(loci_hier)), # per locus in loci_hier order, missing = 0.5, floored
+  p_dog = if (prior_type == "ancestry") pmin(pmax(coalesce(allele1_frequency_hier$dog_frequency[match(loci_hier, allele1_frequency_hier$locus)], 0.5), prior_floor), 1 - prior_floor) else rep(0.5, length(loci_hier)),
+  ancestry_prior_shape = ancestry_prior_shape,
+  phi_hom_by_locus = as.integer(phi_hom_structure %in% c("locus", "locus_sample")), # homozygote overdispersion per locus (partially pooled)
+  phi_hom_by_sample = as.integer(phi_hom_structure %in% c("sample", "locus_sample")) # homozygote overdispersion per sample (partially pooled)
+)
+
+cat(sprintf("Gathered %d pairs (%d samples x %d loci) - running ONE hierarchical Stan call | genotype prior: %s\n",
+            stan_data_hier$N, stan_data_hier$S, stan_data_hier$L, prior_label_hier))
+
+t0 <- Sys.time()
+
+### Actual run for the Bayesian model, finds which parameters fit my data with MCMC sampling and saves all the combinations. results are average of these draws. It runs 4 independent chains with discarded warmup.
+fit_hier <- sampling(
+  mixture_stan_hier_model, # compiled model from stan file
+  data = stan_data_hier,
+  iter = stan_iter, warmup = stan_warmup, chains = stan_chains, cores = min(stan_chains, n_cores), 
+  control = list(adapt_delta = stan_adapt_delta), # smaller steps, avoids divergences in hierarchical models
+  refresh = 0, seed = 1, # no progress messages, same seed for same results when reruning
+  pars = "log_genotype_prior", include = FALSE # the per-pair prior is rebuilt in R from wolf_ancestry, not stored for every draw
+)
+log_time(sprintf("hierarchical sampling: %d pairs", stan_data_hier$N), t0)
+
+# Chain convergence check. Rhat checks if the chains agree (should be at around 1.00, if they disagree > 1.00)- Rhat compares two different spreads within each chain (variations of values inside the chain) and between chains (how far apart the averages are). Rhat should be below 1.01
+hyper_pars_hier <- c("mu_error", "sigma_error_locus", "sigma_error_sample", "mu_bias", "sigma_bias", "phi_het", "sigma_phi_het", "phi_hom_typical",
+                     if (stan_data_hier$phi_hom_by_locus == 1) "sigma_phi_hom_locus",
+                     if (stan_data_hier$phi_hom_by_sample == 1) "sigma_phi_hom_sample") # spreads only when they are estimated
+hyper_summary_hier <- summary(fit_hier, pars = hyper_pars_hier)$summary
+hyper_labels_hier <- c(mu_error = "Typical error rate (logit scale)",
+                       sigma_error_locus = "Error rate spread between loci",
+                       sigma_error_sample = "Error rate spread between samples",
+                       mu_bias = "Typical heterozygote allele bias (logit scale)",
+                       sigma_bias = "Allele bias spread between loci",
+                       phi_het = "Effective molecules in heterozygotes (typical sample)",
+                       sigma_phi_het = "Effective molecules spread between samples (log scale)",
+                       phi_hom_typical = "Homozygote overdispersion (typical pair)",
+                       sigma_phi_hom_locus = "Homozygote overdispersion spread between loci (log scale)",
+                       sigma_phi_hom_sample = "Homozygote overdispersion spread between samples (log scale)")
+kable(data.frame(parameter = hyper_labels_hier[rownames(hyper_summary_hier)],
+                 hyper_summary_hier[, c("mean", "2.5%", "97.5%", "n_eff", "Rhat")], check.names = FALSE), digits = 3, row.names = FALSE)
+
+# Grabs the worst Rhat
+max_rhat_hier <- max(summary(fit_hier)$summary[, "Rhat"], na.rm = TRUE)
+cat(sprintf("Max Rhat: %.3f | divergent transitions: %d | max treedepth hits: %d\n", max_rhat_hier,
+            get_num_divergent(fit_hier), get_num_max_treedepth(fit_hier)))
+
+# Extracts all the info about the draws
+draws_hier <- extract(fit_hier, c("posterior", "error_locus", "error_sample", "het_fraction", "phi_het", "phi_het_sample", "phi_hom_typical", "phi_hom_pair"))
+
+# Per pair means of all the draws 
+post_hier <- apply(draws_hier$posterior, c(2, 3), mean)
+
+# Ancestry prior: the prior of every pair is learned, so the prior columns and the downsampling use its posterior mean (averaged over the draws)
+if (prior_type == "ancestry") {
+  wolf_ancestry_draws <- extract(fit_hier, "wolf_ancestry")$wolf_ancestry # draws x samples
+  allele1_p_draws <- wolf_ancestry_draws[, stan_data_hier$sample_id] * rep(stan_data_hier$p_wolf[stan_data_hier$locus_id] - stan_data_hier$p_dog[stan_data_hier$locus_id], each = nrow(wolf_ancestry_draws)) +
+    rep(stan_data_hier$p_dog[stan_data_hier$locus_id], each = nrow(wolf_ancestry_draws)) # q * p_wolf + (1 - q) * p_dog, draws x pairs
+  pair_prior_hier <- cbind(prior_hom1 = colMeans(allele1_p_draws^2), prior_hom2 = colMeans((1 - allele1_p_draws)^2), prior_het = colMeans(2 * allele1_p_draws * (1 - allele1_p_draws)))
+}
+
+# Parameters for each locus, error rate for average sample and HT allele 1 fraction 
+locus_params_hier <- data.frame(
+  locus = loci_hier,
+  error_rate_locus = round(colMeans(draws_hier$error_locus), 5),
+  het_fraction = round(colMeans(draws_hier$het_fraction), 4))
+
+# Parameters for every sample, error rate and and phi_het_sample which are effective starting molecules of the samples HT (for overdispersion)
+sample_params_hier <- data.frame(
+  barcode = samples_hier,
+  error_rate_sample = round(colMeans(draws_hier$error_sample), 5),
+  phi_het_sample = round(colMeans(draws_hier$phi_het_sample), 1))
+
+if (prior_type == "ancestry") {
+  sample_params_hier$wolf_ancestry <- round(colMeans(wolf_ancestry_draws), 3) # 0 = dog, 1 = wolf
+  sample_params_hier$wolf_ancestry_low <- round(apply(wolf_ancestry_draws, 2, quantile, 0.025), 3) # 95 % credible interval
+  sample_params_hier$wolf_ancestry_high <- round(apply(wolf_ancestry_draws, 2, quantile, 0.975), 3)
+}
+  
+# This the Rstan results table, one row per fitted pair with info about priors used, posterior porbability for all three genotypes per pair, maximum posterior (genotype) and actual genotype (aa, ct, cc, ...), margin, GQ.
+stan_rows_hier <- counts_hier %>%
+  left_join(panel[, c("locus", "allele1", "allele2")], by = "locus") %>%
+  mutate(
+    prior_het = round(pair_prior_hier[, "prior_het"], 4), 
+    posterior_hom1 = round(post_hier[, 1], 4),
+    posterior_hom2 = round(post_hier[, 2], 4),
+    posterior_het = round(post_hier[, 3], 4),
+    genotype_key = max.col(post_hier, ties.method = "first"),
+    genotype_stan = ifelse(genotype_key == 1, paste0(allele1, allele1),
+                    ifelse(genotype_key == 2, paste0(allele2, allele2),
+                           paste0(pmin(allele1, allele2), pmax(allele1, allele2)))), # Alphabeticaly sorted
+    max_posterior = round(apply(post_hier, 1, max), 4),
+    margin = round(apply(post_hier, 1, function(p) diff(sort(p, decreasing = TRUE)[2:1])), 4),
+    GQ = round(pmin(99, -10 * log10(pmax(1 - apply(post_hier, 1, max), 1e-10))), 1)
+  ) %>%
+  select(barcode, locus, k, genotype_stan, prior_het, posterior_hom1, posterior_hom2, posterior_het, max_posterior, margin, GQ)
+
+# Combined table for both runs, the naive one and Bayes, with strand check and QD, depth aswell.
+combined_genotypes_hier <- naive_genotypes_hier %>%
+  select(barcode, locus, genotype_naive = genotype, depth, status, strand_check, QD) %>%
+  left_join(stan_rows_hier, by = c("barcode", "locus")) %>%
+  left_join(locus_params_hier, by = "locus") %>%
+  left_join(sample_params_hier, by = "barcode") %>%
+  mutate(
+    genotype = ifelse(genotype_stan != genotype_naive & strand_check %in% "failed" & # final genotype change when strand check si true
+                        substr(genotype_stan, 1, 1) != substr(genotype_stan, 2, 2),
+                      genotype_naive, genotype_stan), 
+    changed = !is.na(genotype_naive) & !is.na(genotype) & genotype_naive != genotype
+  ) %>%
+  select(barcode, locus, genotype, genotype_stan, genotype_naive, depth, k, status, strand_check, QD,
+                prior_het, posterior_hom1, posterior_hom2, posterior_het, max_posterior, margin, GQ,
+                error_rate_locus, error_rate_sample, phi_het_sample, het_fraction, changed)
+
+# Final results table writing per sample
+for (id in unique(combined_genotypes_hier$barcode)) {
+  write_tsv(combined_genotypes_hier %>% filter(barcode == id),
+            file.path(output_folder_name_hier, paste0(id, "_base_mixture_genotypes_hierarchical.tsv")))
+}
+
+# Data for loci, samples and combined table saved separately
+write_tsv(combined_genotypes_hier, file.path(output_folder_name_hier, "all_barcodes_base_mixture_genotypes_hierarchical.tsv"))
+write_tsv(locus_params_hier, file.path(output_folder_name_hier, "locus_parameters_hierarchical.tsv"))
+write_tsv(sample_params_hier, file.path(output_folder_name_hier, "sample_parameters_hierarchical.tsv"))
+
+#Posterior draws for the plots in .rds format
+saveRDS(draws_hier, file.path(output_folder_name_hier, "draws_hierarchical.rds"))
+# Convergence table, all the parameters summary
+write_tsv(data.frame(parameter = rownames(hyper_summary_hier), hyper_summary_hier, check.names = FALSE),
+          file.path(output_folder_name_hier, "hyperparameters_hierarchical.tsv"))
+
+# Overall summary for html presentation
+summary_hier <- data.frame(
+  summary = c("Results folder", "ASP settings", "Genotype prior",
+              "All pairs (samples x loci)", "Called", "Low depth", "No coverage",
+              "Stan genotype differs from naive", "Stan HT replaced by the strand check",
+              "Calls with max posterior < 0.99",
+              "phi_het, typical sample (effective molecules in a heterozygote)", "phi_het, range across samples", "phi_hom, typical pair", "phi_hom, range across pairs"),
+  value = c(gsub("([_/])", "\\1\u200b", output_folder_name_hier), settings_suffix_hier, gsub("_", "_\u200b", prior_label_hier),
+            nrow(combined_genotypes_hier),
+            sum(combined_genotypes_hier$status == "called"),
+            sum(combined_genotypes_hier$status == "low_depth"),
+            sum(combined_genotypes_hier$status == "no_coverage"),
+            sum(combined_genotypes_hier$changed, na.rm = TRUE),
+            sum(combined_genotypes_hier$genotype_stan != combined_genotypes_hier$genotype, na.rm = TRUE),
+            sum(combined_genotypes_hier$max_posterior < 0.99, na.rm = TRUE),
+            sprintf("%.1f", mean(draws_hier$phi_het)),
+            sprintf("%.1f-%.1f", min(sample_params_hier$phi_het_sample), max(sample_params_hier$phi_het_sample)),
+            sprintf("%.1f", mean(draws_hier$phi_hom_typical)),
+            sprintf("%.0f-%.0f", min(colMeans(draws_hier$phi_hom_pair)), max(colMeans(draws_hier$phi_hom_pair)))))
+
+kable(summary_hier, col.names = c("", ""))
+kable(combined_genotypes_hier %>% filter(changed) %>%
+        select(barcode, locus, genotype_naive, genotype, depth, k, prior_het, posterior_het, error_rate_locus))
+
+if (prior_type == "ancestry") kable(sample_params_hier[, c("barcode", "wolf_ancestry", "wolf_ancestry_low", "wolf_ancestry_high")],
+                                    col.names = c("Sample", "Wolf ancestry", "2.5 %", "97.5 %"))
+```
+
+
+
+## Downsampling and genotype confidence calibration
+This is the validation step of the Bayes model. Idea behind it is to check how sure the genotyper is about every calls and if it only had a certain amount of reads available would the end results, the final genotype be the same? At full depth with many reads and data to work with, practically both genotyper are correct which gives good results but the information about the miscall and samples with low depth is more important. Idea is to check how the model handles lowers depth data for pairs where the final answer is known and correct, lower depth samples are created artificially from higher depth data which is called downsampling. It chooses sample with over 75 reads, it produces sub samples from 3, 4, 5, 6, 10 ... 75 reads and repeats it 100 per subsample. I test 12 depths, 100 times, for 740 pairs, from those calls error rate can be computed and the GQ confidence can be tested for the model, is a GQ 20 call relly GQ 20?
+
+Pairs used for the downsampling:  with more than 75 reads, have a reference and its final call matches the reference (667 HM and 82 HT).
+Downsampling is done for both naive caller and bayes model with imported info about parameters from previous stan call (posterior, error rate, prior,...). GQ results are then s grouped into 0-5, 5- 10, ..., 50+ bins.
+Calibration per GQ bin, what Stan claimed (max posterior) against what was the correct result (bins with zero wrongs calls get Wilson upper  bound, error cant be zero)
+For every depth error rate is calculated, split into HT and HM.
+
+Calibration statistics are calculated for the stan calls: Brier score, Brier skill score, ECE, Spiegelhalter Z (for all, and HM HT separately). Calibration is needed to check how over or under confident the model is or HT and HM calls, it checks if calls with 1 % error rate are actually wrong 1 % of the time. For example: If HM calls have 2.7 % error rate and were wrong 0.8 % they are too cautious, and if my HT calls have error rate of about  5.4 % and were wrong 10 % of the time they are too confident. Brier score is the average of squared (claimed probability - 0 or 1), where minus 1 when right and -0 when wrong. Lower score is better. Because the naive caller is always 100 % sure its Brier score is just the error rate. Brier skill score, compares Brier score with a simple forecaster which give every call the same overall accuracy. If its above 0 it means  Stans individual probabilities add information, below 0 means they are worse than just one flat number. ECE is the expected calibration error, its the average gaps between the observed and claimed  error across all GQ bins, weighted by the number of calls in the bin (0 is perfect). Spiegelhalter Z is a significance tedt of calibration, at around 0 it means it's calibrated, above +2 over confident, below -2 too cautious,
+
+Bootstraping, it gives uncertantiy bands for results. Treatinf every downsampled call as independent is incorrect because all the subsampled read cluster come from the same locus sample pair. If the original pair for lets say HT inherits some unnusal split of 35:65, all the subsamples will as well. There are really 749 independent pairs. treating every call as indepdent would make the boostrapped bands too narrow. It draws with replacememnt from 749 pairs HM and HT separately, recomputes error rates and statisctis. 
+
+Plot for GQ threshold trade off, if i use it as a filter, how many call are kept and how many of the errors can i get rid of.
+```{r Downsampling_Calibration_Compute, eval = params$run_downsampling}
+# Check if the first chunk ran
+stopifnot("run the Stan chunk first" = exists("combined_genotypes_hier"))
+
+# Reference genotypes and settings
+reference_genotypes_file <- file.path("Data/Supporting_data/Reference_genotypes", paste0("genotypes_", dataset_name, ".tsv"))
+read_depths_to_test <- unlist(read_depths_to_test) # the YAML list becomes a plain number vector
+gq_bin_edges <- c(seq(0, 30, by = 2.5), 35, 40, 50, Inf) 
+gq_thresholds_to_test <- 1:40 # GQ thresholds for the trade-off plot
+stopifnot("the deepest read depth to test must not be larger than minimum_reads_for_truth_pair" = max(read_depths_to_test) <= minimum_reads_for_truth_pair)
+
+# Creation of the downsampling folder label so each run goes into a separate folder
+downsampling_settings_label <- sprintf("minreads%d_maxdepth%d_draws%d", minimum_reads_for_truth_pair, max(read_depths_to_test), draws_per_depth)
+downsampling_output_folder <- file.path("Results", dataset_name, "Graphics", "Downsampling_calibration", # one folder that gathers every downsampling run
+                                        paste0(settings_suffix_hier,
+                                               if (strand_downgrade) "_stranddowngrade" else "_strandflag",
+                                               "_", prior_label_hier,
+                                               "_", downsampling_settings_label))
+dir.create(downsampling_output_folder, showWarnings = FALSE, recursive = TRUE)
+
+### Helper functions
+# Makes sure the alleles are always in the same alpabetical order (reference panel was not created inside the script, so it might have different labels)
+sort_alleles_in_genotype <- function(genotype) ifelse(is.na(genotype), NA_character_,
+                                                      paste0(pmin(substr(genotype, 1, 1), substr(genotype, 2, 2)),
+                                                             pmax(substr(genotype, 1, 1), substr(genotype, 2, 2))))
+
+# Stans genotype function, it computes three genotype probabilities the same way as .stan file does with k allele 1 reads out of d possible reads. It uses the values the fitted model learned from for that specific locus sample pair. This is the part of the analysis which enables downsampling without running stan again which would take a lot longer.
+stan_genotype_posterior <- function(k, d, error_rate, het_fraction, phi_het, phi_hom, genotype_prior) {
+  log_beta_binomial <- function(k, d, a, b) lchoose(d, k) + lbeta(k + a, d - k + b) - lbeta(a, b)
+  het_allele1_share <- het_fraction * (1 - error_rate) + (1 - het_fraction) * error_rate # read errors inside HT
+  log_likelihoods <- cbind(log_beta_binomial(k, d, (1 - error_rate) * phi_hom, error_rate * phi_hom), # HM1
+                           log_beta_binomial(k, d, error_rate * phi_hom, (1 - error_rate) * phi_hom), # HM2
+                           log_beta_binomial(k, d, het_allele1_share * phi_het, (1 - het_allele1_share) * phi_het)) #HT
+  log_prior_times_likelihood <- log(genotype_prior) + log_likelihoods # prior * likelihood in log (+)
+  scaled_values <- exp(log_prior_times_likelihood - apply(log_prior_times_likelihood, 1, max)) # subtract the max first, to avoid really small values (end results is the same because the exp(A - n) = exp(A) * exp-(n), the exp(-n) cancels in the division)
+  scaled_values / rowSums(scaled_values) # divided by their sum = posterior (with a flat prior this is the normalised likelihood)
+}
+### Step 1: fitted model values and the reference set
+
+# Table of every learned parameter for each pair for the downsampling, error rates, overdispersion values, prior, .... 
+fitted_pair_error_rates <- data.frame(
+  barcode = counts_hier$barcode,
+  locus = counts_hier$locus,
+  error_rate_pair = colMeans(extract(fit_hier, "error_rate")$error_rate), # posterior mean per pair
+  phi_het_pair = colMeans(draws_hier$phi_het_sample)[match(counts_hier$barcode, samples_hier)], 
+  phi_hom_pair = colMeans(draws_hier$phi_hom_pair), # homozygote overdispersion of every pair (shared, per locus and/or per sample)
+  prior_hom1 = pair_prior_hier[, "prior_hom1"],
+  prior_hom2 = pair_prior_hier[, "prior_hom2"],
+  prior_het = pair_prior_hier[, "prior_het"])
+
+# Ancestry prior in downsampling without reusing evidence. Each pairs prior comes from wolf ancestry of its sample estimated from the other loci only. A downsampled pairs is never scored based on a prior built with the full depth of reads, so the evidence of the locus is not reused when doing the downsampling. Ancestry posterior is evaluated on a grid from the called genotypes and fixed wolf or dog allele frequencies  (hybrid-index likelihood, Buerkle 2005).
+if (prior_type == "ancestry") {
+  ancestry_grid <- seq(0.0005, 0.9995, by = 0.001) # every wolf ancestry value that is tried
+  pair_genotype_class <- max.col(post_hier, ties.method = "first") # full-depth call of every pair: 1 = hom1, 2 = hom2, 3 = het
+  grid_allele1_p <- outer(ancestry_grid, stan_data_hier$p_wolf[stan_data_hier$locus_id]) +
+    outer(1 - ancestry_grid, stan_data_hier$p_dog[stan_data_hier$locus_id]) # allele1 frequency for every ancestry value (rows) and pair (columns)
+  called_class <- matrix(pair_genotype_class, nrow = length(ancestry_grid), ncol = length(pair_genotype_class), byrow = TRUE)
+  log_called_genotype <- log(ifelse(called_class == 1, grid_allele1_p^2,
+                                    ifelse(called_class == 2, (1 - grid_allele1_p)^2, 2 * grid_allele1_p * (1 - grid_allele1_p)))) # how likely each pair's call is under each ancestry value
+  log_sample_total <- t(rowsum(t(log_called_genotype), stan_data_hier$sample_id)) # summed over all loci of each sample
+  log_without_own_locus <- log_sample_total[, stan_data_hier$sample_id] - log_called_genotype +
+    dbeta(ancestry_grid, ancestry_prior_shape, ancestry_prior_shape, log = TRUE) # the pair's own locus taken out, Beta prior added
+  ancestry_weights <- exp(sweep(log_without_own_locus, 2, apply(log_without_own_locus, 2, max))) # max subtracted first to avoid tiny numbers
+  ancestry_weights <- sweep(ancestry_weights, 2, colSums(ancestry_weights), "/") # weights of every pair sum to 1
+  fitted_pair_error_rates$prior_hom1 <- colSums(ancestry_weights * grid_allele1_p^2)
+  fitted_pair_error_rates$prior_hom2 <- colSums(ancestry_weights * (1 - grid_allele1_p)^2)
+  fitted_pair_error_rates$prior_het <- colSums(ancestry_weights * 2 * grid_allele1_p * (1 - grid_allele1_p))
+}
+
+# Importing reference genotypes
+reference_genotypes <- read_tsv(reference_genotypes_file, show_col_types = FALSE) %>%
+  select(barcode = sample_id, locus, reference = genotype)
+
+# Truth pairs which match every criteria for the downsampling, they have a reference, are correct and have enough reads 
+truth_pairs <- combined_genotypes_hier %>%
+  filter(status == "called", depth >= minimum_reads_for_truth_pair) %>%
+  inner_join(reference_genotypes, by = c("barcode", "locus")) %>%
+  filter(!is.na(reference)) %>%
+  mutate(reference_sorted = sort_alleles_in_genotype(reference)) %>%
+  filter(reference_sorted == sort_alleles_in_genotype(genotype_naive)) %>%
+  select(barcode, locus, reference_sorted) %>%
+  left_join(panel[, c("locus", "allele1", "allele2")], by = "locus") %>%
+  left_join(fitted_pair_error_rates, by = c("barcode", "locus")) %>%
+  left_join(locus_params_hier[, c("locus", "het_fraction")], by = "locus") %>%
+  mutate(pair_id = paste(barcode, locus, sep = "|"),
+         true_class = ifelse(substr(reference_sorted, 1, 1) == substr(reference_sorted, 2, 2), "True homozygotes", "True heterozygotes"))
+
+cat(sprintf("Truth set: %d pairs (%d homozygous, %d heterozygous) with >= %d reads and a full-depth call matching the reference | Stan prior: %s\n",
+            nrow(truth_pairs), sum(truth_pairs$true_class == "True homozygotes"),
+            sum(truth_pairs$true_class == "True heterozygotes"), minimum_reads_for_truth_pair, prior_label_hier))
+
+# All the usable reads from the pipeline and returns small table for every pair
+reads_by_truth_pair <- reads_hier %>%
+  filter(!is.na(called_allele)) %>%
+  mutate(pair_id = paste(barcode, locus, sep = "|")) %>%
+  filter(pair_id %in% truth_pairs$pair_id) %>%
+  select(pair_id, called_allele, direction) %>%
+  split(~ pair_id)
+
+### Step 2: Draw reads and naive calls
+
+# Downsampling function
+downsample_and_call_one_pair <- function(pair_id) {
+  pair_reads <- reads_by_truth_pair[[pair_id]] 
+  allele1_of_pair <- truth_pairs$allele1[match(pair_id, truth_pairs$pair_id)]
+  depth_of_each_draw <- rep(read_depths_to_test, each = draws_per_depth) # draws needed
+  allele1_reads_in_draw <- integer(length(depth_of_each_draw)) # k
+  naive_genotype <- character(length(depth_of_each_draw)) # naive call, with the pipeline's strand setting
+  for (i in seq_along(depth_of_each_draw)) {
+    kept_reads <- sample.int(nrow(pair_reads), depth_of_each_draw[i]) # picks random reads without replacement
+    kept_alleles <- pair_reads$called_allele[kept_reads]
+    allele1_reads_in_draw[i] <- sum(kept_alleles == allele1_of_pair)
+    naive_genotype[i] <- unname(call_genotype(kept_alleles, pair_reads$direction[kept_reads],
+                                              minimum_required_depth = minimum_required_depth, HT_min_frequence = HT_min_frequence,
+                                              strand_flag_prob = strand_flag_prob, expected_minor_fraction = expected_minor_fraction,
+                                              strand_downgrade = strand_downgrade)["genotype"])
+  }
+  data.frame(pair_id = pair_id, depth = depth_of_each_draw, k = allele1_reads_in_draw, genotype_naive = naive_genotype)
+}
+
+# Random number generator which works in parallel
+default_random_generator <- RNGkind()[1]
+RNGkind("L'Ecuyer-CMRG") # switch to reproducible random numbers across mclapply workers, with no overlap
+set.seed(1) # same for every run
+t0 <- Sys.time()
+
+# Running the downsampling
+downsampled_list <- mclapply(truth_pairs$pair_id, downsample_and_call_one_pair, mc.cores = n_cores)
+RNGkind(default_random_generator) # back to the session's default generator
+failed_pairs <- vapply(downsampled_list, function(result) is.null(result) || inherits(result, "try-error"), logical(1)) # mclapply returns errors (or NULL for a killed worker) instead of stopping # Checks for error, mclapply doesnt stop just produces error object
+first_failed <- which(failed_pairs)[1]
+if (any(failed_pairs)) stop(sprintf("downsampling failed for %d of %d pairs. First error (%s): %s",
+                                    sum(failed_pairs), length(failed_pairs), truth_pairs$pair_id[first_failed],
+                                    if (is.null(downsampled_list[[first_failed]])) "no result, worker was killed (often out of memory)" else downsampled_list[[first_failed]]))
+# Combined table
+downsampled_draws <- bind_rows(downsampled_list)
+log_time(sprintf("downsampling: %d pairs x %d depths x %d draws", nrow(truth_pairs), length(read_depths_to_test), draws_per_depth), t0)
+
+### Step 3: Stan downsampling and scoring
+
+#Joins the dowssampling draws table with the data table of all the stans genotype probabilites
+downsampled_draws_with_parameters <- downsampled_draws %>%
+  left_join(select(truth_pairs, -barcode, -locus), by = "pair_id")
+
+stan_posteriors <- stan_genotype_posterior(downsampled_draws_with_parameters$k, downsampled_draws_with_parameters$depth,
+                                           downsampled_draws_with_parameters$error_rate_pair, downsampled_draws_with_parameters$het_fraction,
+                                           downsampled_draws_with_parameters$phi_het_pair, downsampled_draws_with_parameters$phi_hom_pair,
+                                           genotype_prior = as.matrix(downsampled_draws_with_parameters[, c("prior_hom1", "prior_hom2", "prior_het")]))
+stan_best_genotype <- max.col(stan_posteriors, ties.method = "first") # 1 = HM1, 2 = HM2, 3 = HT
+
+# Scored calls and genotypes with all the statistics for error by depth, calibration, trade-off plots
+downsampled_calls_scored <- downsampled_draws_with_parameters %>%
+  mutate(genotype_stan = ifelse(stan_best_genotype == 1, paste0(allele1, allele1),
+                          ifelse(stan_best_genotype == 2, paste0(allele2, allele2), paste0(pmin(allele1, allele2), pmax(allele1, allele2)))),
+         max_posterior_stan = pmax(stan_posteriors[, 1], stan_posteriors[, 2], stan_posteriors[, 3]),
+         GQ_stan = pmin(99, -10 * log10(pmax(1 - max_posterior_stan, 1e-10))),
+         gq_bin = cut(GQ_stan, gq_bin_edges, right = FALSE),
+         naive_no_call = is.na(genotype_naive),
+         naive_wrong = !naive_no_call & sort_alleles_in_genotype(genotype_naive) != reference_sorted,
+         stan_wrong = genotype_stan != reference_sorted,
+         called_class = ifelse(substr(genotype_stan, 1, 1) == substr(genotype_stan, 2, 2), "Homozygous calls", "Heterozygous calls"))
+
+### Step 5: Per pair bootstrap
+
+# Prep for the bootstrap: every matrix has one row per truth pair (in truth_pairs order) and one column per depth or GQ bin
+is_homozygous_pair <- truth_pairs$true_class == "True homozygotes"
+homozygous_rows <- which(is_homozygous_pair)
+heterozygous_rows <- which(!is_homozygous_pair)
+depth_groups <- list(`All pairs` = rep(TRUE, nrow(truth_pairs)),
+                     `True homozygotes` = is_homozygous_pair,
+                     `True heterozygotes` = !is_homozygous_pair)
+calibration_groups <- c("All calls", "Homozygous calls", "Heterozygous calls")
+
+# Per pair counts for each depth: tapply sums every pair x depth cell, empty cells get 0
+pair_factor <- factor(downsampled_calls_scored$pair_id, levels = truth_pairs$pair_id)
+pair_and_depth <- list(pair_factor, factor(downsampled_calls_scored$depth, levels = read_depths_to_test))
+naive_calls_by_depth <- tapply(!downsampled_calls_scored$naive_no_call, pair_and_depth, sum, default = 0)
+naive_wrong_by_depth <- tapply(downsampled_calls_scored$naive_wrong, pair_and_depth, sum, default = 0)
+stan_wrong_by_depth <- tapply(downsampled_calls_scored$stan_wrong, pair_and_depth, sum, default = 0)
+
+# Per pair counts for each GQ bin, separately for all, homozygous and heterozygous calls
+calibration_inputs <- sapply(calibration_groups, function(group_name) {
+  in_group <- group_name == "All calls" | downsampled_calls_scored$called_class == group_name
+  group_calls <- downsampled_calls_scored[in_group, ]
+  pair_and_bin <- list(pair_factor[in_group], group_calls$gq_bin)
+  list(calls = tapply(group_calls$stan_wrong, pair_and_bin, length, default = 0),
+       wrong = tapply(group_calls$stan_wrong, pair_and_bin, sum, default = 0),
+       claimed = tapply(1 - group_calls$max_posterior_stan, pair_and_bin, sum, default = 0),
+       brier_sum = tapply((group_calls$max_posterior_stan - !group_calls$stan_wrong)^2, pair_factor[in_group], sum, default = 0))
+}, simplify = FALSE)
+
+gq_bin_names <- levels(downsampled_calls_scored$gq_bin)
+
+# Bootstraping
+set.seed(2)
+t0 <- Sys.time()
+bootstrap_depth_rounds <- vector("list", bootstrap_rounds)
+bootstrap_calibration_rounds <- vector("list", bootstrap_rounds)
+bootstrap_statistics_rounds <- vector("list", bootstrap_rounds)
+for (round_number in seq_len(bootstrap_rounds)) {
+  pair_weights <- tabulate(c(homozygous_rows[sample.int(length(homozygous_rows), replace = TRUE)],
+                             heterozygous_rows[sample.int(length(heterozygous_rows), replace = TRUE)]),
+                           nbins = nrow(truth_pairs)) # how often each pair is drawn this round, homozygous and heterozygous drawn separately
+
+  bootstrap_depth_rounds[[round_number]] <- bind_rows(lapply(names(depth_groups), function(group_name) {
+    weights_in_group <- pair_weights * depth_groups[[group_name]]
+    naive_rate <- as.vector(weights_in_group %*% naive_wrong_by_depth) / as.vector(weights_in_group %*% naive_calls_by_depth)
+    stan_rate <- as.vector(weights_in_group %*% stan_wrong_by_depth) / (sum(weights_in_group) * draws_per_depth)
+    data.frame(round = round_number, group = group_name, depth = read_depths_to_test,
+               naive = naive_rate, stan = stan_rate, difference = naive_rate - stan_rate)
+  }))
+
+  bootstrap_calibration_rounds[[round_number]] <- bind_rows(lapply(calibration_groups, function(group_name) {
+    observed <- as.vector(pair_weights %*% calibration_inputs[[group_name]]$wrong) /
+                as.vector(pair_weights %*% calibration_inputs[[group_name]]$calls)
+    data.frame(round = round_number, group = group_name, gq_bin = gq_bin_names, observed_error = observed)
+  }))
+
+  bootstrap_statistics_rounds[[round_number]] <- bind_rows(lapply(calibration_groups, function(group_name) {
+    inputs <- calibration_inputs[[group_name]]
+    calls_drawn <- sum(pair_weights %*% inputs$calls)
+    data.frame(round = round_number, group = group_name,
+               brier = sum(pair_weights * inputs$brier_sum) / calls_drawn,
+               ece = sum(abs(pair_weights %*% (inputs$wrong - inputs$claimed))) / calls_drawn) # ECE = |wrong - claimed| errors over all calls
+  }))
+}
+
+# Combining all the result tables
+bootstrap_depth_results <- bind_rows(bootstrap_depth_rounds)
+bootstrap_calibration_results <- bind_rows(bootstrap_calibration_rounds)
+bootstrap_statistics_results <- bind_rows(bootstrap_statistics_rounds)
+log_time(sprintf("pair bootstrap: %d rounds", bootstrap_rounds), t0)
+
+### Step 4: error rate and read depth
+
+# Data prep and finals tables for the plots, this table stack the results twice once labelled as all pairs once by the true class (for groups by step)
+calls_by_true_class <- bind_rows(mutate(downsampled_calls_scored, group = "All pairs"),
+                                 mutate(downsampled_calls_scored, group = true_class))
+
+# results per group and depth
+error_by_depth_estimates <- calls_by_true_class %>%
+  group_by(group, depth) %>%
+  summarise(Naive = sum(naive_wrong) / sum(!naive_no_call),
+            `Hierarchical Stan` = mean(stan_wrong),
+            naive_no_calls = sum(naive_no_call),
+            n_calls = n(), n_pairs = n_distinct(pair_id), .groups = "drop")
+
+# Boostraping bands
+depth_bands <- bootstrap_depth_results %>%
+  group_by(group, depth) %>%
+  summarise(naive_low = quantile(naive, 0.025, na.rm = TRUE), naive_high = quantile(naive, 0.975, na.rm = TRUE),
+            stan_low = quantile(stan, 0.025, na.rm = TRUE), stan_high = quantile(stan, 0.975, na.rm = TRUE),
+            difference_low = quantile(difference, 0.025, na.rm = TRUE), difference_high = quantile(difference, 0.975, na.rm = TRUE),
+            .groups = "drop")
+
+error_by_depth_table <- error_by_depth_estimates %>%
+  mutate(difference = Naive - `Hierarchical Stan`) %>%
+  left_join(depth_bands, by = c("group", "depth")) %>%
+  mutate(group = factor(group, levels = names(depth_groups)))
+kable(error_by_depth_table %>%
+        select(group, depth, Naive, `Hierarchical Stan`, difference, difference_low, difference_high) %>%
+        mutate(across(-c(group, depth), ~ round(100 * .x, 3))),
+      col.names = c("Group", "Reads", "Naive error (%)", "Stan error (%)", "Difference (pp)", "Band low", "Band high"))
+
+### Step 5: statistics for calibration plots
+
+# Data prep and finals tables for calibration plot, this table stack the results twice once labelled as all pairs once by the called class (for groupt by step)
+calls_by_called_class <- bind_rows(mutate(downsampled_calls_scored, group = "All calls"),
+                                   mutate(downsampled_calls_scored, group = called_class))
+
+calibration_counts <- calls_by_called_class %>%
+  group_by(group, gq_bin) %>%
+  summarise(n = n(), n_pairs = n_distinct(pair_id), n_wrong = sum(stan_wrong),
+            claimed_error = mean(1 - max_posterior_stan), .groups = "drop") %>%
+  mutate(gq_bin = as.character(gq_bin))
+
+
+
+calibration_statistics_estimates <- calls_by_called_class %>%
+  mutate(correct = as.numeric(!stan_wrong), claimed_correct = max_posterior_stan, # 1 and 0 for right or wrong, max posteriors and prep for spiegelhalter Ztest
+         spiegelhalter_term = (correct - claimed_correct) * (1 - 2 * claimed_correct)) %>%
+  group_by(group) %>%
+  summarise(n_calls = n(),
+            accuracy = mean(correct),
+            mean_claimed_error = mean(1 - claimed_correct),
+            observed_error = 1 - mean(correct),
+            brier = mean((claimed_correct - correct)^2), # the lower the better
+            reference_brier = mean(correct) * (1 - mean(correct)), # brier where every call has the same overall accuracy
+            spiegelhalter_z_cluster = { #if Z is more than +2 its overconfident, if its lower than -2 it too cautious
+              per_pair_terms <- tapply(spiegelhalter_term, pair_id, sum) 
+              sum(per_pair_terms) / sqrt(sum(per_pair_terms^2))
+            },
+            .groups = "drop") %>%
+  mutate(brier_skill_score = 1 - brier / reference_brier)
+
+ece_estimates <- calibration_counts %>%
+  summarise(ece = sum(abs(n_wrong - n * claimed_error)) / sum(n), .by = group) # |observed - claimed| errors over all calls divided by all calls
+
+# Bands for the 1000 bootstraped rounds
+statistics_bands <- bootstrap_statistics_results %>%
+  group_by(group) %>%
+  summarise(brier_low = quantile(brier, 0.025, na.rm = TRUE), brier_high = quantile(brier, 0.975, na.rm = TRUE),
+            ece_low = quantile(ece, 0.025, na.rm = TRUE), ece_high = quantile(ece, 0.975, na.rm = TRUE), .groups = "drop")
+
+# Naive caller is always "100 %" certain so its Brier score is its error rate (over its calls, no-calls excluded)
+naive_brier_equivalent <- sum(downsampled_calls_scored$naive_wrong) / sum(!downsampled_calls_scored$naive_no_call) 
+
+# Joins all the estimates
+calibration_statistics_table <- calibration_statistics_estimates %>%
+  left_join(ece_estimates, by = "group") %>%
+  left_join(statistics_bands, by = "group") %>%
+  mutate(group = factor(group, levels = calibration_groups),
+         prior = prior_label_hier) %>%
+  arrange(group)
+kable(calibration_statistics_table %>%
+        transmute(group, n_calls,
+                  observed_error_pct = round(100 * observed_error, 2), mean_claimed_error_pct = round(100 * mean_claimed_error, 2),
+                  brier = signif(brier, 3), brier_95 = sprintf("%.4f-%.4f", brier_low, brier_high),
+                  brier_skill_score = round(brier_skill_score, 3),
+                  ece_pct = round(100 * ece, 2), ece_95 = sprintf("%.2f-%.2f", 100 * ece_low, 100 * ece_high),
+                  spiegelhalter_z_cluster = round(spiegelhalter_z_cluster, 2)),
+      col.names = c("Calls", "n", "Observed error (%)", "Claimed error (%)", "Brier", "Brier 95 %", "Brier skill", "ECE (%)", "ECE 95 %", "Spiegelhalter Z"),
+      format.args = list(big.mark = ","))
+
+cat(sprintf("Naive caller (claims certainty) Brier-equivalent = its error rate: %.4f | hierarchical Stan Brier (all calls, %s): %.4f\n",
+            naive_brier_equivalent, prior_label_hier, calibration_statistics_table$brier[calibration_statistics_table$group == "All calls"]))
+
+### Step 6: Calibration table per GQ bin
+
+# 95 % bands for each group and GQ bin
+calibration_bands <- bootstrap_calibration_results %>%
+  group_by(group, gq_bin) %>%
+  summarise(boot_error_low = quantile(observed_error, 0.025, na.rm = TRUE),
+            boot_error_high = quantile(observed_error, 0.975, na.rm = TRUE), .groups = "drop")
+
+# Data prep for calibration plot
+calibration_table <- calibration_counts %>%
+  left_join(calibration_bands, by = c("group", "gq_bin")) %>%
+  mutate(
+    observed_error = n_wrong / n,
+    zero_error_upper = ifelse(n_wrong == 0, 1.96^2 / (n + 1.96^2), NA), # 95 % Wilson upper bound for zero wrongs calls cases
+    claimed_Q = pmin(60, -10 * log10(pmax(claimed_error, 1e-6))),
+    empirical_Q = pmin(60, -10 * log10(ifelse(n_wrong == 0, zero_error_upper, observed_error))), # zero errors plotted at the lower bound
+    bar_Q_low = pmin(60, -10 * log10(ifelse(n_wrong == 0, zero_error_upper, boot_error_high))),
+    bar_Q_high = ifelse(n_wrong == 0, 60, pmin(60, -10 * log10(pmax(boot_error_low, 1e-6)))),
+    point_type = ifelse(n_wrong == 0, "No errors (lower bound)", "Errors observed"),
+    group = factor(group, levels = calibration_groups))
+
+### Step 7: GQ threshold trade-off
+# GQ as a filter: share of calls kept and share of wrong calls thrown out, per depth and threshold
+gq_tradeoff_table <- bind_rows(lapply(gq_thresholds_to_test, function(threshold) {
+  downsampled_calls_scored %>%
+    summarise(gq_threshold = threshold,
+              share_kept = mean(GQ_stan >= threshold),
+              share_errors_removed = sum(stan_wrong & GQ_stan < threshold) / sum(stan_wrong), # NaN = no errors at this depth
+              error_among_kept = sum(stan_wrong & GQ_stan >= threshold) / sum(GQ_stan >= threshold), # NaN = no call passes
+              .by = depth)
+}))
+
+kable(gq_tradeoff_table %>% filter(gq_threshold %in% c(0, 10, 20, 30)) %>%
+        mutate(share_kept = round(100 * share_kept, 1), error_among_kept = round(100 * error_among_kept, 3)) %>%
+        arrange(depth, gq_threshold)) 
+
+### Step 8: Saving tables and everything else the plot chunk needs
+
+write_tsv(error_by_depth_table, file.path(downsampling_output_folder, "error_vs_depth.tsv"))
+write_tsv(calibration_table, file.path(downsampling_output_folder, "genotype_calibration.tsv"))
+write_tsv(calibration_statistics_table, file.path(downsampling_output_folder, "calibration_statistics.tsv"))
+write_tsv(gq_tradeoff_table, file.path(downsampling_output_folder, "gq_cutoff_tradeoff.tsv"))
+write_tsv(downsampled_calls_scored %>% select(pair_id, true_class, called_class, depth, k, prior_hom1, prior_hom2, prior_het, genotype_naive,
+genotype_stan, max_posterior_stan, GQ_stan, naive_wrong, stan_wrong),
+          file.path(downsampling_output_folder, "downsampled_calls.tsv"))
+
+# Prior written out for the plot subtitles
+prior_description <- switch(prior_type,
+  flat = "flat",
+  het_share = sprintf("het share %s", prior_het_share),
+  hwe = prior_population,
+  ancestry = sprintf("learned ancestry, %s vs FreqDOG", prior_population))
+
+# Creates one .rds file with everything the plotting chunk needs
+downsampling_plot_inputs <- list(
+  error_by_depth_table = error_by_depth_table,
+  calibration_table = calibration_table,
+  calibration_statistics_table = calibration_statistics_table,
+  gq_tradeoff_table = gq_tradeoff_table,
+  n_truth_pairs = nrow(truth_pairs),
+  draws_per_depth = draws_per_depth,
+  bootstrap_rounds = bootstrap_rounds,
+  calibration_groups = calibration_groups,
+  prior_description = prior_description)
+
+saveRDS(downsampling_plot_inputs, file.path(downsampling_output_folder, "downsampling_plot_inputs.rds"))
+```
+
+
+
+## Downsampling and genotype confidence calibration - PLOTS
+First chunk makes sure the folder names are correct for inputs and outputs when running only the plots. If everything is processed th efolder names are automatically correct.
+
+```{r Downsampling_Plots_Only_Folder, eval = params$run_downsampling_plots && !params$run_downsampling}
+# Plots only: the folder of the existing run with the current YAML settings, built the same way as in the compute chunk
+settings_suffix_hier <- sub("^Identified_ASP_genotypes_", "", basename(output_folder_name_identified))
+read_depths_to_test <- unlist(read_depths_to_test)
+downsampling_settings_label <- sprintf("minreads%d_maxdepth%d_draws%d", minimum_reads_for_truth_pair, max(read_depths_to_test), draws_per_depth)
+downsampling_output_folder <- file.path("Results", dataset_name, "Graphics", "Downsampling_calibration",
+                                        paste0(settings_suffix_hier,
+                                               if (strand_downgrade) "_stranddowngrade" else "_strandflag",
+                                               "_", run_names$prior_label,
+                                               "_", downsampling_settings_label))
+stopifnot("no saved run with these settings, run the downsampling first" = file.exists(file.path(downsampling_output_folder, "downsampling_plot_inputs.rds")))
+```
+
+This chunk makes three plots for downsampling and calibration visualsation, comparison of error rates between HM and HT against read depth, paired difference between stan and naive caller showing how many miscalls are made, and the GQ threshold simulation for using it as a filter.
+
+```{r Downsampling_Calibration_Plots, eval = params$run_downsampling_plots, fig.width = 8.27, fig.height = 5.85}
+### Chunk for plotting the calibration and other results from the previous data prep chunk
+if (!exists("downsampling_plot_inputs")) downsampling_plot_inputs <- readRDS(file.path(downsampling_output_folder, "downsampling_plot_inputs.rds"))
+invisible(list2env(downsampling_plot_inputs[names(downsampling_plot_inputs) != "downsampling_output_folder"], envir = environment())) 
+
+# Plot settings
+depths_in_tradeoff_graph <- c(4, 6, 8, 10, 15, 20) 
+depth_colours <- setNames(colorRampPalette(c(error_colour, "#AB5D26", "#D9A877", "#E1C473", correct_colour, "#2C5724"))(length(depths_in_tradeoff_graph)),
+                          paste(depths_in_tradeoff_graph, "reads")) 
+lowest_plotted_error <- 1e-5 # zero errors are drawn at 0.001 % on the log scales
+caller_colours <- c("Naive" = "#834D24", "Hierarchical Stan" = "#2C5724")
+downsampling_theme <- theme_minimal(base_family = plot_font, base_size = 12) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, size = 10),
+        strip.text = element_text(face = "bold", size = 12),
+        legend.position = "top",
+        panel.grid.minor = element_blank())
+
+### 1. Plot, error rate against read depth
+group_pair_counts <- distinct(error_by_depth_table, group, n_pairs) # one row per group, n_pairs is the same at every depth
+group_panel_labels <- setNames(sprintf("%s (n = %d)", group_pair_counts$group, group_pair_counts$n_pairs), group_pair_counts$group)
+
+error_plot_data <- bind_rows(
+  error_by_depth_table %>% transmute(group, depth, caller = "Naive", error_rate = Naive, band_low = naive_low, band_high = naive_high),
+  error_by_depth_table %>% transmute(group, depth, caller = "Hierarchical Stan", error_rate = `Hierarchical Stan`, band_low = stan_low, band_high = stan_high)
+) %>%
+  mutate(caller = factor(caller, levels = names(caller_colours)),
+         across(c(error_rate, band_low, band_high), ~ pmax(.x, lowest_plotted_error))) # log scale cannot show 0
+
+error_by_depth_plot <- ggplot(error_plot_data, aes(x = depth, y = error_rate, colour = caller, fill = caller)) +
+  geom_ribbon(aes(ymin = band_low, ymax = band_high), alpha = 0.15, colour = NA) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 1.8) +
+  facet_wrap(~ group, labeller = as_labeller(group_panel_labels)) + 
+  scale_x_log10(breaks = c(3, 5, 8, 12, 20, 30, 50, 75), expand = c(0, 0)) + 
+  coord_cartesian(clip = "off") +
+  scale_y_log10(labels = label_percent(accuracy = 0.001, drop0trailing = TRUE), breaks = c(1e-5, 1e-4, 1e-3, 1e-2, 1e-1),
+                expand = expansion(mult = c(0, 0.03))) + 
+  scale_colour_manual(values = caller_colours, labels = c("Naive" = "Naive", "Hierarchical Stan" = sprintf("Hierarchical Stan (%s prior)", prior_description))) +
+  scale_fill_manual(values = caller_colours, labels = c("Naive" = "Naive", "Hierarchical Stan" = sprintf("Hierarchical Stan (%s prior)", prior_description))) +
+  labs(title = "Genotype error rate by depth with 95 % bootstrap band over pairs",
+       x = "Reads kept (log)", y = "Wrong calls (log)", colour = NULL, fill = NULL) +
+  downsampling_theme +
+  theme(panel.spacing.x = unit(2, "lines")) 
+print(error_by_depth_plot)
+
+### 2. Plot, paired difference naive - Stan
+# Paired difference between naive and stan caller on the same draws (if its above zero Stan makes fewer errors)
+caller_difference_plot <- ggplot(error_by_depth_table, aes(x = depth, y = difference, colour = group, fill = group)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_blank(aes(y = -difference_low)) + # invisible mirrored band, so the y axis is symmetric around 0
+  geom_blank(aes(y = -difference_high)) +
+  geom_ribbon(aes(ymin = difference_low, ymax = difference_high), alpha = 0.15, colour = NA) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 1.8) +
+  scale_x_log10(breaks = c(3, 5, 8, 12, 20, 30, 50, 75)) +
+  scale_y_continuous(labels = label_number(scale = 100, accuracy = 0.1, style_positive = "plus")) + 
+  scale_colour_manual(values = group_colours) +
+  scale_fill_manual(values = group_colours) +
+  labs(title = "Naive minus hierarchical Stan error rate",
+       subtitle = sprintf("Same draws for both callers | Stan genotype prior: %s | Band: 95%% bootstrap over pairs (%d rounds)",
+                          prior_description, bootstrap_rounds),
+       x = "Reads kept (log scale)", y = "Wrong calls avoided by Stan per 100 calls", colour = NULL, fill = NULL) +
+  downsampling_theme +
+  theme(legend.position = "right")
+print(caller_difference_plot)
+
+### 3. Plot, GQ cut-off trade-off
+# GQ as a filter: per depth, share of all calls removed (cost) against share of wrong calls removed (gain), one point per threshold
+gq_tradeoff_plot_data <- gq_tradeoff_table %>%
+  filter(depth %in% depths_in_tradeoff_graph, !is.na(share_errors_removed)) %>% 
+  mutate(share_removed = 1 - share_kept,
+         overall_error = error_among_kept[gq_threshold == min(gq_threshold)], 
+         share_correct_removed = (share_removed - overall_error * share_errors_removed) / (1 - overall_error), 
+         youden_index = share_errors_removed - share_correct_removed, 
+         depth_label = factor(paste(depth, "reads"), levels = names(depth_colours)), .by = depth) %>%
+  arrange(depth, gq_threshold) 
+
+# Best threshold per depth
+best_threshold_points <- gq_tradeoff_plot_data %>% slice_max(youden_index, n = 1, with_ties = FALSE, by = depth)
+kable(best_threshold_points %>%
+        transmute(depth, gq_threshold, 100 * share_kept, 100 * share_errors_removed, 100 * share_correct_removed, 100 * error_among_kept),
+      digits = c(0, 0, 1, 1, 1, 3),
+      col.names = c("Reads", "Best GQ threshold", "Calls kept (%)", "Wrong calls removed (%)", "Correct calls removed (%)", "Error among kept (%)"),
+      caption = "Best GQ threshold per depth (largest Youden index)")
+# Legend entries with each depth's best threshold
+depth_legend_labels <- setNames(sprintf("%s (GQ %d)", best_threshold_points$depth_label, best_threshold_points$gq_threshold),
+                                best_threshold_points$depth_label)
+
+gq_tradeoff_plot <- ggplot(gq_tradeoff_plot_data, aes(x = share_correct_removed, y = share_errors_removed, colour = depth_label)) +
+  geom_path(linewidth = 0.8) +
+  geom_point(data = best_threshold_points, size = 2.6) + # best threshold per depth
+  scale_x_continuous(labels = percent, breaks = seq(0, 0.3, 0.05)) +
+  scale_y_continuous(labels = percent, breaks = seq(0, 1, 0.25)) +
+  scale_colour_manual(values = depth_colours, labels = depth_legend_labels) +
+  coord_cartesian(xlim = c(0, 0.3), ylim = c(0, 1)) + 
+  labs(title = "GQ filter simulation: wrong calls removed against correct calls removed",
+       subtitle = sprintf("Hierarchical Stan with %s prior | GQ thresholds %s to %s",
+                          prior_description, min(gq_tradeoff_plot_data$gq_threshold), max(gq_tradeoff_plot_data$gq_threshold)),
+       x = "Correct calls removed", y = "Wrong calls removed", colour = NULL) +
+  downsampling_theme +
+  theme(legend.position = "right")
+print(gq_tradeoff_plot)
+
+### Saving plots
+ggsave(file.path(downsampling_output_folder, "error_vs_depth.png"), error_by_depth_plot, width = 8.27, height = 5.85, dpi = 300, bg = "white") 
+ggsave(file.path(downsampling_output_folder, "error_vs_depth.pdf"), error_by_depth_plot, width = 8.27, height = 5.85, device = cairo_pdf)
+ggsave(file.path(downsampling_output_folder, "caller_difference.png"), caller_difference_plot, width = 8.27, height = 5.85, dpi = 300, bg = "white")
+ggsave(file.path(downsampling_output_folder, "caller_difference.pdf"), caller_difference_plot, width = 8.27, height = 5.85, device = cairo_pdf)
+ggsave(file.path(downsampling_output_folder, "gq_cutoff_tradeoff.png"), gq_tradeoff_plot, width = 8.27, height = 5.85, dpi = 300, bg = "white")
+ggsave(file.path(downsampling_output_folder, "gq_cutoff_tradeoff.pdf"), gq_tradeoff_plot, width = 8.27, height = 5.85, device = cairo_pdf)
+```
+
+
+
+## Genotype Calibration Plot
+This chunk contains data prep and genotype calibration plot.
+```{r Genotype_Calibration_Plot, eval = params$run_downsampling_plots, fig.width = 8.27, fig.height = 8.27}
+### Calibration plot: HM and HT with bands
+calibration_colours <- c("All calls" = "grey25", "Homozygous calls" = hm_dark, "Heterozygous calls" = ht_dark) 
+
+calibration_verdicts <- calibration_statistics_table %>%
+  mutate(legend_label = sprintf("%s: ECE %.1f %%, Z = %.0f",
+                                c("All calls" = "All", "Homozygous calls" = "HM", "Heterozygous calls" = "HT")[as.character(group)],
+                                100 * ece, spiegelhalter_z_cluster))
+calibration_legend_labels <- setNames(calibration_verdicts$legend_label, as.character(calibration_verdicts$group))
+
+minimum_wrong_calls_per_bin <- 10 # an error rate needs enough wrong calls to be measured, bins with fewer are left out
+calibration_bins <- calibration_table %>% filter(group != "All calls") %>% mutate(group = droplevels(group))
+calibration_plot_data <- calibration_table %>%
+  filter(n_wrong >= minimum_wrong_calls_per_bin) %>%
+  mutate(group = factor(group, levels = calibration_groups)) # All calls, HM, HT in this order
+
+hidden_bins <- calibration_bins %>% filter(n_wrong < minimum_wrong_calls_per_bin)
+hidden_note <- sprintf("Bins with fewer than %d wrong calls not shown (%d wrong out of %s calls there)",
+                       minimum_wrong_calls_per_bin, sum(hidden_bins$n_wrong), comma(sum(hidden_bins$n)))
+phred_breaks <- seq(0, 40, 10)
+
+calibration_plot <- ggplot(calibration_plot_data, aes(x = claimed_Q, y = empirical_Q, colour = group)) +
+  annotate("polygon", x = c(0, 40, 0), y = c(0, 40, 40), fill = correct_colour, alpha = 0.08) + # background colour
+  annotate("polygon", x = c(0, 40, 40), y = c(0, 0, 40), fill = error_colour, alpha = 0.08) + 
+  annotate("text", x = 1.5, y = 39, label = "Fewer errors than claimed", hjust = 0, vjust = 1, size = 3.6, colour = "grey30", family = plot_font) +
+  annotate("text", x = 39, y = 1, label = "More errors than claimed", hjust = 1, vjust = 0, size = 3.6, colour = "grey30", family = plot_font) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_ribbon(aes(ymin = bar_Q_low, ymax = bar_Q_high, fill = group), alpha = 0.18, colour = NA) +
+  geom_path(linewidth = 0.8) +
+  geom_point(aes(size = n), alpha = 0.9) +
+  scale_colour_manual(values = calibration_colours, labels = calibration_legend_labels, name = NULL) +
+  scale_fill_manual(values = calibration_colours, guide = "none") + 
+  scale_size_continuous(transform = "log10", range = c(1.5, 6), breaks = c(10000, 100000, 300000),
+                        labels = label_number(scale = 1e-3, suffix = "k"), name = "Calls in bin") + 
+  scale_x_continuous(breaks = phred_breaks) +
+  scale_y_continuous(breaks = phred_breaks) +
+  coord_equal(xlim = c(0, 40), ylim = c(0, 40), expand = FALSE) +
+  guides(colour = guide_legend(order = 1, nrow = 1, override.aes = list(size = 4)), size = guide_legend(order = 2, nrow = 1)) +
+  labs(title = "Genotype quality calibration: claimed against observed",
+       subtitle = sprintf("Hierarchical Stan with %s prior | Bands: 95 %% bootstrap over pairs\n%s",
+                          prior_description, hidden_note),
+       x = "Claimed GQ", y = "Observed GQ") +
+  downsampling_theme +
+  theme(legend.box = "horizontal",
+        legend.title = element_text(size = rel(0.8)), 
+        legend.text = element_text(margin = margin(l = 3)), 
+        legend.key.spacing.x = unit(6, "pt"), 
+        legend.spacing.x = unit(8, "pt"), 
+        legend.margin = margin(0, 0, 0, 0)) 
+print(calibration_plot)
+
+ggsave(file.path(downsampling_output_folder, "genotype_calibration.png"), calibration_plot, width = 8.27, height = 8.27, dpi = 300, bg = "white")
+ggsave(file.path(downsampling_output_folder, "genotype_calibration.pdf"), calibration_plot, width = 8.27, height = 8.27, device = cairo_pdf)
+```
+
+
+
+## Genotype Prior Comparison Plots
+This chunk contains comparison plots between different priors used on the same settings, it contains data prep and plot for error rate and genotype calibration comparison.
+```{r Prior_Comparison_Plots, eval = params$run_downsampling_plots, fig.width = 11.69, fig.height = 8.27}
+### Prior comparison plot with same settings but three different priors
+# Importing the files
+comparison_parent_folder <- file.path("Results", dataset_name, "Graphics", "Downsampling_calibration")
+comparison_folders <- file.path(comparison_parent_folder, c(
+  "unpadded_anchor3_errors0.08_strandflag_priorflat_minreads75_maxdepth75_draws300",
+  "unpadded_anchor3_errors0.08_strandflag_priorhet0.15_minreads75_maxdepth75_draws300",
+  "unpadded_anchor3_errors0.08_strandflag_priorhwe_FreqWOLF_all_floor0.001_minreads75_maxdepth75_draws300",
+  "unpadded_anchor3_errors0.08_strandflag_priorancestry_FreqWOLF_all_FreqDOG_floor0.001_beta1_minreads75_maxdepth75_draws300",
+  "unpadded_anchor3_errors0.08_strandflag_priorancestry_FreqWOLF_EastEurope_FreqDOG_floor0.001_beta1_minreads75_maxdepth75_draws300"))
+prior_palette <- c("#E0A526", "#2F6690", "#8E5C8E", "#C2502E", "#5E8C3A")
+
+# Saved results of each run, all runs must share the same truth set
+comparison_runs <- lapply(comparison_folders, function(folder) readRDS(file.path(folder, "downsampling_plot_inputs.rds")))
+stopifnot("the runs have different truth sets" = length(unique(sapply(comparison_runs, `[[`, "n_truth_pairs"))) == 1)
+comparison_prior_names <- sapply(comparison_runs, `[[`, "prior_description")
+prior_colours <- setNames(prior_palette, comparison_prior_names)
+
+# Summary table: one row per prior and call type
+kable(bind_rows(lapply(comparison_runs, function(run) mutate(run$calibration_statistics_table, prior = run$prior_description))) %>%
+        transmute(prior, group, n_calls,
+                  claimed_error_pct = round(100 * mean_claimed_error, 2), observed_error_pct = round(100 * observed_error, 2),
+                  ece_pct = round(100 * ece, 2), spiegelhalter_z_cluster = round(spiegelhalter_z_cluster, 1),
+                  brier = signif(brier, 3), brier_skill_score = round(brier_skill_score, 3)),
+      col.names = c("Prior", "Calls", "n", "Claimed error (%)", "Observed error (%)", "ECE (%)", "Spiegelhalter Z", "Brier", "Brier skill"),
+      format.args = list(big.mark = ","))
+
+# Calibration: bins with enough wrong calls, one line per prior, homozygous and heterozygous calls in separate panels
+calibration_comparison_data <- bind_rows(lapply(comparison_runs, function(run) mutate(run$calibration_table, prior = run$prior_description))) %>%
+  filter(group != "All calls", n_wrong >= minimum_wrong_calls_per_bin) %>%
+  mutate(group = factor(group, levels = c("Homozygous calls", "Heterozygous calls")),
+         prior = factor(prior, levels= comparison_prior_names))
+
+# Panel titles with the number of calls in each group, as a range over the priors (each prior calls a few more or fewer homozygotes)
+calls_per_group <- bind_rows(lapply(comparison_runs, function(run) run$calibration_statistics_table)) %>%
+  filter(group != "All calls") %>%
+  summarise(fewest = min(n_calls), most = max(n_calls), .by = group)
+calibration_panel_labels <- setNames(sprintf("%s (%s\u2013%s calls, %d pairs)", calls_per_group$group,
+                                             label_number(scale_cut = cut_short_scale())(signif(calls_per_group$fewest, 3)),
+                                             label_number(scale_cut = cut_short_scale())(signif(calls_per_group$most, 3)),
+                                             comparison_runs[[1]]$n_truth_pairs), # calls of both panels come from the whole truth set
+                                     calls_per_group$group)
+
+calibration_comparison_plot <- ggplot(calibration_comparison_data, aes(x = claimed_Q, y = empirical_Q, colour = prior, fill = prior)) +
+  annotate("polygon", x = c(0, 60, 0), y = c(0, 60, 60), fill = correct_colour, alpha = 0.08) + 
+  annotate("polygon", x = c(0, 60, 60), y = c(0, 0, 60), fill = error_colour, alpha = 0.08) + 
+  geom_text(data = data.frame(group = factor("Homozygous calls", levels = c("Homozygous calls", "Heterozygous calls")),
+                              x = c(2, 58), y = c(58, 2), label = c("Fewer errors than claimed", "More errors than claimed"),
+                              hjust = c(0, 1), vjust = c(1, 0)),
+            aes(x = x, y = y, label = label, hjust = hjust, vjust = vjust),
+            size = 3.6, colour = "grey30", family = plot_font, inherit.aes = FALSE) + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_ribbon(aes(ymin = bar_Q_low, ymax = bar_Q_high), alpha = 0.18, colour = NA) +
+  geom_path(linewidth = 0.9) +
+  geom_point(size = 1.8) +
+  facet_wrap(~ group, labeller = as_labeller(calibration_panel_labels)) +
+  scale_colour_manual(values = prior_colours) +
+  scale_fill_manual(values = prior_colours) +
+  scale_x_continuous(breaks = seq(0, 60, 10)) +
+  scale_y_continuous(breaks = seq(0, 60, 10)) +
+  coord_equal(xlim = c(0, 60), ylim = c(0, 60), expand = FALSE) +
+  guides(colour = guide_legend(nrow = 1), fill = guide_legend(nrow = 1)) + 
+  labs(title = sprintf("Genotype quality calibration with 95 %% bootstrap band over pairs, %d draws per pair and depth",
+                       comparison_runs[[1]]$draws_per_depth),
+       x = "Claimed GQ", y = "Observed GQ", colour = NULL, fill = NULL) +
+    downsampling_theme +
+  theme(panel.spacing.x = unit(2, "lines")) # space between the two panels
+print(calibration_comparison_plot)
+
+# Error rate against depth: the naive caller once (same draws in every run) and Stan once per prior
+error_comparison_data <- bind_rows(
+  comparison_runs[[1]]$error_by_depth_table %>%
+    transmute(group, depth, line = "Naive", error_rate = Naive, band_low = naive_low, band_high = naive_high),
+  bind_rows(lapply(comparison_runs, function(run) mutate(run$error_by_depth_table, prior = run$prior_description))) %>%
+    transmute(group, depth, line = paste("Stan,", prior), error_rate = `Hierarchical Stan`, band_low = stan_low, band_high = stan_high)) %>%
+  mutate(line = factor(line, levels = c("Naive", paste("Stan,", comparison_prior_names))),
+         across(c(error_rate, band_low, band_high), ~ pmax(.x, lowest_plotted_error))) # log scale cannot show 0
+error_line_colours <- setNames(c("grey40", prior_colours), c("Naive", paste("Stan,", comparison_prior_names)))
+
+
+group_pair_counts <- distinct(comparison_runs[[1]]$error_by_depth_table, group, n_pairs) 
+group_panel_labels <- setNames(sprintf("%s (n = %d)", group_pair_counts$group, group_pair_counts$n_pairs), group_pair_counts$group)
+
+error_comparison_plot <- ggplot(error_comparison_data, aes(x = depth, y = error_rate, colour = line, fill = line)) +
+  geom_ribbon(aes(ymin = band_low, ymax = band_high), alpha = 0.1, colour = NA) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 1.5) +
+  facet_wrap(~ group, labeller = as_labeller(group_panel_labels)) +
+  scale_x_log10(breaks = c(3, 5, 8, 12, 20, 30, 50, 75), expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  scale_y_log10(labels = label_percent(accuracy = 0.001, drop0trailing = TRUE), breaks = c(1e-5, 1e-4, 1e-3, 1e-2, 1e-1),
+                expand = expansion(mult = c(0, 0.03))) +
+  scale_colour_manual(values = error_line_colours) +
+  scale_fill_manual(values = error_line_colours) +
+  guides(colour = guide_legend(nrow = 1), fill = guide_legend(nrow = 1)) +
+  labs(title = sprintf("Genotype error rate against read depth with 95 %% bootstrap band over pairs, %d draws per pair and depth",
+                       comparison_runs[[1]]$draws_per_depth),
+       x = "Reads kept (log)", y = "Wrong calls (log)", colour = NULL, fill = NULL) +
+  downsampling_theme +
+  theme(panel.spacing.x = unit(2, "lines")) 
+
+print(error_comparison_plot)
+
+ggsave(file.path(comparison_parent_folder, "prior_comparison_calibration.png"), calibration_comparison_plot, width = 11.69, height = 8.27, dpi = 300, bg = "white")
+ggsave(file.path(comparison_parent_folder, "prior_comparison_calibration.pdf"), calibration_comparison_plot, width = 11.69, height = 8.27, device = cairo_pdf)
+ggsave(file.path(comparison_parent_folder, "prior_comparison_error_vs_depth.png"), error_comparison_plot, width = 11.69, height = 8.27, dpi = 300, bg = "white")
+ggsave(file.path(comparison_parent_folder, "prior_comparison_error_vs_depth.pdf"), error_comparison_plot, width = 11.69, height = 8.27, device = cairo_pdf)
+```
+
+
+
+<details><summary>Settings used for this run</summary>
+
+```{r settings_table, echo = FALSE}
+kable(settings_used, row.names = FALSE, col.names = c("Setting", "Value"))
+```
+
+</details>
+
+
+## Reproducibility
+
+<details><summary>Session info</summary>
+
+```{r session_info}
+sessionInfo()
+```
+
+</details>

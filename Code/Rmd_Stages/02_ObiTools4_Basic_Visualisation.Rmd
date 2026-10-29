@@ -1,0 +1,443 @@
+---
+title: "Stage 02: ObiTools4 Basic Visualisation"
+subtitle: "`r paste0('Dataset: ', params$dataset_name, ' - ', params$n_barcodes, ' barcodes')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: hide
+    df_print: kable
+    highlight: tango
+    theme:
+      version: 5
+      bg: "#FFFFFF"
+      fg: "#2E2A26"
+      primary: "#657359"
+      secondary: "#8B775F"
+      base_font: "Times New Roman"
+      heading_font: "Times New Roman"
+      headings-font-weight: 700
+      code_font:
+        google: "JetBrains Mono"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+params:
+  # Dataset
+  dataset_name: "small" # or "big"
+  n_barcodes: 6 # or 24
+
+  # Paths to the tools this script uses, paste the bin paths in Master_Pipeline.Rmd for ObiTools4 so it works
+  obitools_bin_folder: ""
+
+  # File with dataset name, sample names and barcodes, manual input before running
+  barcode_map_path: "Data/Supporting_data/Samples_ONT_barcodes.tsv"
+---
+
+```{r knitr_options, include = FALSE}
+library(knitr)
+opts_chunk$set(comment = "", message = FALSE)
+```
+
+```{css, echo = FALSE}
+pre, pre code { white-space: pre-wrap; word-break: break-word; }
+.scroll-output { max-height: 250px; overflow-y: auto; }
+```
+
+
+This is the second script one should run before using any other R scripts or genotyping functions. All editable settings are in the YAML header of the .Rmd (defaults) or in Master_Pipeline.Rmd (shared settings). All paths are written from the project folder (Full_workflow).
+
+After completing this script, move on to the 03_SNP_Genotyping_Minimap2.Rmd script.
+
+
+## Libraries, settings, paths and basic setup 
+Settings, path to the installed ObiTools4 tools and a timing function for speed optimization analysis.
+
+```{r Setup}
+suppressMessages({
+  library(ggplot2)
+  library(dplyr)
+  library(readr)
+  library(jsonlite)
+  library(scales)
+  library(patchwork)
+})
+
+#Shared function uploaded from .R script
+source("Code/R_scripts/asp_functions.R", local = TRUE)
+
+timing_log <- list()
+
+# Settings from the YAML header
+invisible(list2env(params, envir = environment()))
+
+# Path to the installed ObiTools4 directories so R can find the commands
+login_shell_path <- tryCatch(system2(Sys.getenv("SHELL", "/bin/zsh"), c("-ilc", shQuote("echo $PATH")), stdout = TRUE, stderr = FALSE, timeout = 10),
+                             error = function(e) "", warning = function(w) "")
+tool_search_folders <- unique(path.expand(c(obitools_bin_folder, strsplit(tail(c("", login_shell_path), 1), ":")[[1]],
+                                            rev(Sys.glob(path.expand(c("~/*/bin", "~/*/*/bin", "~/*/*/*/bin")))),
+                                            Sys.glob(path.expand(c("~/*conda*/bin", "~/*conda*/envs/*/bin", "~/mambaforge/envs/*/bin"))),
+                                            "/usr/local/bin", "/opt/homebrew/bin", Sys.glob("/opt/*/bin"))))
+needed_tools <- c("obicsv", "obisummary")
+tool_folders <- sapply(needed_tools, function(tool) {
+  found_in <- tool_search_folders[file.exists(file.path(tool_search_folders, tool))]
+  if (length(found_in) == 0) stop(tool, " not found. Install ObiTools4, or paste its bin folder into obitools_bin_folder in the YAML")
+  found_in[1]
+})
+Sys.setenv(PATH = paste(c(unique(tool_folders), Sys.getenv("PATH")), collapse = ":"))
+
+barcode_numbers <- sprintf("%02d", seq_len(n_barcodes))
+identified_reads_folder <- file.path("Data/Processed_data", dataset_name, "Demultiplexed_sequence_data/Identified_sample_sequences_Obi4")
+unidentified_reads_folder <- file.path("Data/Processed_data", dataset_name, "Demultiplexed_sequence_data/Unidentified_sample_sequences_Obi4")
+
+obitools_summaries_folder <- file.path("Results", dataset_name, "Graphics/Obitools4_Summary_Plots") # tables and plots in one folder
+dir.create(obitools_summaries_folder, showWarnings = FALSE, recursive = TRUE)
+
+# Settings used each run saved directly inside the output folder, useful for reproducibility
+settings_used <- data.frame(setting = c("run_date", names(params)),
+                            value = c(format(Sys.time(), "%Y-%m-%d %H:%M"),
+                                      vapply(params, function(setting_value) paste(setting_value, collapse = ", "), character(1))))
+write.table(settings_used, file.path(obitools_summaries_folder, "settings_used_02.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+<details><summary>Settings used for this run</summary>
+
+```{r settings_table, echo = FALSE}
+kable(settings_used)
+```
+
+</details>
+
+
+
+## ObiTools4 command error summary 
+Next chunk is written on a similar principle as the first script: they are basic ObiTools4 bash commands converted to work in R. They create basic summary statistics of the obimultiplex results (Error_summary.csv, Summary_stats.csv and Locus_error_stats.csv), found in Results/dataset_name/Graphics/Obitools4_Summary_Plots
+
+Error_summary.csv: how many unidentified reads failed obimultiplex per barcode and for which reason.
+Summary_stats.csv: number of identified reads, total and average read length and number of sequence variants per barcode.
+Locus_error_stats.csv: number of identified reads and average forward and reverse primer errors per locus and barcode.
+
+```{r ObiTools4_Command_Error_Summary, class.output = "scroll-output"}
+#Error summary
+error_summary_path <- file.path(obitools_summaries_folder, "Error_summary.csv")
+
+# Writes the header, then appends to it
+writeLines("barcode,error,count", error_summary_path)
+
+for (barcode_number in barcode_numbers) {
+  unidentified_fastq_path <- file.path(unidentified_reads_folder, sprintf("barcode%s_unidentified.fastq", barcode_number))
+  if (!file.exists(unidentified_fastq_path)) next
+
+  error_summary_start <- Sys.time()
+  # obicsv extracts the error tag of every read, sort | uniq -c counts each error type, awk writes barcode,error,count lines
+  error_summary_command <- sprintf(
+    "obicsv -k obimultiplex_error %s | tail -n +2 | sort | uniq -c | awk -v bc=\"barcode%s\" '{$1=$1; count=$1; $1=\"\"; sub(/^ /,\"\"); print bc\",\"$0\",\"count}' >> %s",
+    shQuote(unidentified_fastq_path), barcode_number, shQuote(error_summary_path))
+  system(error_summary_command)
+  log_time(sprintf("barcode%s: error_summary", barcode_number), error_summary_start)
+}
+
+
+# Summary stats
+summary_stats_path <- file.path(obitools_summaries_folder, "Summary_stats.csv")
+writeLines("barcode,reads,total_length,variants,avg_length", summary_stats_path)
+
+for (barcode_number in barcode_numbers) {
+  identified_fastq_path <- file.path(identified_reads_folder, sprintf("barcode%s_identified.fastq", barcode_number))
+  if (!file.exists(identified_fastq_path)) next
+
+  summary_stats_start <- Sys.time()
+  obisummary_json_path <- tempfile(fileext = ".json")
+  system(sprintf("obisummary %s > %s 2>/dev/null", shQuote(identified_fastq_path), shQuote(obisummary_json_path)))
+  if (!file.exists(obisummary_json_path) || file.size(obisummary_json_path) == 0) {
+    cat(sprintf("barcode%s: obisummary returned nothing, skipped\n", barcode_number))
+    next
+  }
+
+  obisummary_result <- fromJSON(obisummary_json_path)
+  barcode_reads <- obisummary_result$count$reads
+  barcode_total_length <- obisummary_result$count$total_length
+  barcode_variants <- obisummary_result$count$variants
+  barcode_avg_length <- if (barcode_reads > 0) barcode_total_length / barcode_reads else 0
+
+  write(sprintf("barcode%s,%.0f,%.0f,%.0f,%.1f", barcode_number, barcode_reads, barcode_total_length, barcode_variants, barcode_avg_length),
+    summary_stats_path, append = TRUE)
+  unlink(obisummary_json_path)
+  log_time(sprintf("barcode%s: summary_stats", barcode_number), summary_stats_start)
+}
+
+
+# Locus error stats
+locus_error_stats_path <- file.path(obitools_summaries_folder, "Locus_error_stats.csv")
+locus_error_stats_per_barcode <- list()
+
+for (barcode_number in barcode_numbers) {
+  identified_fastq_path <- file.path(identified_reads_folder, sprintf("barcode%s_identified.fastq", barcode_number))
+  if (!file.exists(identified_fastq_path)) next
+
+  locus_error_start <- Sys.time()
+  obicsv_output_lines <- system(sprintf("obicsv -k experiment -k obimultiplex_forward_error -k obimultiplex_reverse_error %s",
+    shQuote(identified_fastq_path)), intern = TRUE)
+  if (length(obicsv_output_lines) <= 1) next # header only, no reads
+
+  # first line is the header from obicsv itself, parse the rest as CSV
+  read_primer_errors <- read.csv(text = obicsv_output_lines)
+  names(read_primer_errors) <- c("locus", "fwd_err", "rev_err")
+
+  locus_error_stats_per_barcode[[barcode_number]] <- read_primer_errors %>%
+    group_by(locus) %>%
+    summarise(n_reads = n(),
+      avg_fwd_err = round(mean(fwd_err), 2),
+      avg_rev_err = round(mean(rev_err), 2)) %>%
+    mutate(barcode = paste0("barcode", barcode_number), .before = 1)
+  log_time(sprintf("barcode%s: locus_error_stats", barcode_number), locus_error_start)
+}
+
+locus_error_stats <- bind_rows(locus_error_stats_per_barcode)
+write.csv(locus_error_stats, locus_error_stats_path, row.names = FALSE, quote = FALSE)
+
+```
+
+
+
+## Basic visualization of ObiTools4 summary statistics 
+Basic visualization of the ObiTools4 summaries with ggplot2. Every plot is saved as png and pdf inside Results/dataset_name/Graphics/Obitools4_Summary_Plots
+
+```{r Basic_Visualization_of_ObiTools4_Summary_Statistics, fig.show = "hold"}
+# Palette from palette finder on R Graph gallery, Albrecht Dürer
+obitools_palette <- c("#657359", "#9AA582", "#8B775F", "#D7C9BE", "#F1E4DB") 
+error_palette <- c("#AF6458", "#D9AF6B") 
+primer_error_colour <- error_palette[1] 
+length_colour <- "#467378" 
+plot_font <- "Times New Roman" 
+darken_colour <- function(colour, darken_fraction = 0.3) {
+  rgb(t(col2rgb(colour) * (1 - darken_fraction)), maxColorValue = 255)
+}
+
+obitools_plot_theme <- theme_minimal(base_size = 10, base_family = plot_font) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank())
+
+# Renames barcodes to actual sample names
+sample_names <- read_tsv(barcode_map_path, show_col_types = FALSE) %>%
+  filter(dataset == dataset_name) %>%
+  mutate(barcode_number = sub("^[A-Za-z]+", "", barcode)) %>%
+  select(barcode_number, sample_id)
+
+add_sample_names <- function(stats_table) {
+  stats_table %>%
+    mutate(barcode_number = sub("^barcode", "", barcode)) %>%
+    left_join(sample_names, by = "barcode_number") %>%
+    arrange(barcode_number) %>%
+    mutate(sample = coalesce(sample_id, barcode), # Takes the first value that isn't NA, in case there is no name for some barcodes
+      sample = factor(sample, levels = unique(sample))) %>%
+    select(-barcode_number, -sample_id)
+}
+
+error_summary_named <- add_sample_names(read_csv(error_summary_path, show_col_types = FALSE))
+summary_stats_named <- add_sample_names(read_csv(summary_stats_path, show_col_types = FALSE))
+
+
+# 1. plot: Number of identified reads per sample, ordered
+reads_per_sample_plot <- ggplot(summary_stats_named, aes(x = reorder(sample, -reads), y = reads)) +
+  geom_col(fill = obitools_palette[2], colour = darken_colour(obitools_palette[2]), alpha = 0.8, linewidth = 0.4, width = 0.7) +
+  scale_y_continuous(labels = label_comma(), expand = expansion(mult = c(0, 0.05))) +
+  labs(title = "Identified reads per sample", x = "Sample", y = "Reads") +
+  obitools_plot_theme +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave(file.path(obitools_summaries_folder, "Reads_per_sample.png"), reads_per_sample_plot, width = 8.27, height = 5.85, dpi = 300, bg = "white")
+ggsave(file.path(obitools_summaries_folder, "Reads_per_sample.pdf"), reads_per_sample_plot, width = 8.27, height = 5.85, device = cairo_pdf)
+reads_per_sample_plot
+
+
+# 2. plot: average fragment length per sample, violin plot
+avg_length_median <- median(summary_stats_named$avg_length)
+
+# Labels sit above the highest dot
+avg_length_label_y <- max(summary_stats_named$avg_length) + 0.08 * diff(range(summary_stats_named$avg_length))
+
+# Makes the same jitter for every run
+set.seed(1) 
+
+avg_length_plot <- ggplot(summary_stats_named, aes(x = "All samples", y = avg_length)) +
+  geom_violin(fill = length_colour, colour = darken_colour(length_colour), alpha = 0.8, linewidth = 0.4, width = 0.8) +
+  geom_boxplot(width = 0.12, fill = NA, colour = "grey20", linewidth = 0.3, outlier.shape = NA) + # only box outline
+  geom_jitter(width = 0.08, height = 0, shape = 21, size = 1.6, fill = "grey25", colour = "white", stroke = 0.3, alpha = 0.9) + 
+  annotate("point", x = 1, y = avg_length_median, colour = "#A6513B", size = 2.8) + # median
+  annotate("segment", x = 1, xend = 1, y = max(summary_stats_named$avg_length), yend = avg_length_label_y, linetype = "dashed", colour = "grey30", linewidth = 0.3) +
+  annotate("label", x = 1, y = avg_length_label_y, label = sprintf("median = %.1f bp", avg_length_median), vjust = 0, size = 2.8, family = plot_font) +
+  scale_y_continuous(limits = c(floor(min(summary_stats_named$avg_length)), NA), expand = expansion(mult = c(0, 0.08))) + 
+  labs(title = "Average length per sample", x = NULL, y = "Average length (bp)") +
+  obitools_plot_theme +
+theme(axis.text.x = element_blank())
+
+ggsave(file.path(obitools_summaries_folder, "Avg_length_per_sample.png"), avg_length_plot, width = 4.13, height = 5.85, dpi = 300, bg = "white")
+ggsave(file.path(obitools_summaries_folder, "Avg_length_per_sample.pdf"), avg_length_plot, width = 4.13, height = 5.85, device = cairo_pdf)
+avg_length_plot
+
+
+# 3. plot: stacked plot comparing error types between samples with most common error type on the bottom
+
+error_tag_pairs <- sub(".*tag pair \\(([a-z]*:[a-z]*)\\).*", "\\1", grep("tag pair \\(", error_summary_named$error, value = TRUE))
+error_tag_sequences <- setdiff(unique(unlist(strsplit(error_tag_pairs, ":"))), "")
+
+#Tag sequence from NGSFilter file, not hard coded in case different tags are used
+error_title_tag <- if (length(error_tag_sequences) > 0) paste0(" (tag: ", paste(error_tag_sequences, collapse = ", "), ")") else ""
+
+# Shortened Obimultiplexed error types
+error_summary_ordered <- error_summary_named %>%
+  mutate(error = case_when(error == "No barcode identified" ~ "Primer pair not found",
+                           grepl("tag pair \\(:\\)", error) ~ "No tag found",
+                           grepl("tag pair \\(:[a-z]+\\)", error) ~ "Forward tag not found",
+                           grepl("tag pair \\([a-z]+:\\)", error) ~ "Reverse tag not found",
+                           grepl("tag pair \\([a-z]+:[a-z]+\\)", error) ~ "Tag pair not in NGSfilter",
+                           TRUE ~ error), # any other error message
+         sample = reorder(sample, -count, FUN = sum),
+         error = reorder(error, count, FUN = sum))
+error_type_colours <- c("#A6513B", "#D9AF6B", "#657359", "#2F4858", "#8B775F", "#9AA582")[seq_len(n_distinct(error_summary_ordered$error))]
+
+unidentified_errors_plot <- ggplot(error_summary_ordered, aes(x = sample, y = count, fill = error)) +
+  geom_col(aes(colour = error), alpha = 0.8, linewidth = 0.3, width = 0.7) +
+  scale_fill_manual(values = error_type_colours) +
+  scale_colour_manual(values = darken_colour(error_type_colours), guide = "none") +
+  scale_y_continuous(labels = label_comma(), expand = expansion(mult = c(0, 0.05))) +
+  labs(title = paste0("Unidentified reads per sample, by error type", error_title_tag), x = "Sample", y = "Reads", fill = NULL) +
+  obitools_plot_theme +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "top") + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(colour = "black", linewidth = 0.3)))
+
+ggsave(file.path(obitools_summaries_folder, "Unidentified_reads_by_error.png"), unidentified_errors_plot, width = 8.27, height = 5.85, dpi = 300, bg = "white")
+ggsave(file.path(obitools_summaries_folder, "Unidentified_reads_by_error.pdf"), unidentified_errors_plot, width = 8.27, height = 5.85, device = cairo_pdf)
+unidentified_errors_plot
+
+
+# 4. plot: Compares identified sequences per locus summed over samples
+reads_per_locus <- locus_error_stats %>%
+  group_by(locus) %>%
+  summarise(total_reads = sum(n_reads))
+
+reads_per_locus_plot <- ggplot(reads_per_locus, aes(x = total_reads, y = reorder(locus, total_reads))) +
+  geom_col(fill = obitools_palette[1], colour = darken_colour(obitools_palette[1]), alpha = 0.8, linewidth = 0.3, width = 0.75) +
+  scale_x_continuous(labels = label_comma(), expand = expansion(mult = c(0, 0.05))) +
+  labs(title = "Identified reads per locus, summed over all samples", x = "Reads", y = NULL) +
+  obitools_plot_theme +
+  theme(panel.grid.major.x = element_line(colour = "grey92"), panel.grid.major.y = element_blank(),
+        axis.text.y = element_text(size = 7))
+
+ggsave(file.path(obitools_summaries_folder, "Identified_reads_per_locus.png"), reads_per_locus_plot, width = 5.85, height = 8.27, dpi = 300, bg = "white")
+ggsave(file.path(obitools_summaries_folder, "Identified_reads_per_locus.pdf"), reads_per_locus_plot, width = 5.85, height = 8.27, device = cairo_pdf)
+reads_per_locus_plot
+
+
+# 5. plot: Scatter plot of forward and reverse error rates
+primer_errors_per_locus <- locus_error_stats %>%
+  group_by(locus) %>%
+  summarise(avg_fwd_err = weighted.mean(avg_fwd_err, n_reads),
+    avg_rev_err = weighted.mean(avg_rev_err, n_reads),
+    total_reads = sum(n_reads))
+
+
+#Pretty returns nicely rounded tick positions for that range
+primer_error_range <- range(c(primer_errors_per_locus$avg_fwd_err, primer_errors_per_locus$avg_rev_err))
+primer_error_breaks <- pretty(primer_error_range)
+
+primer_errors_plot <- ggplot(primer_errors_per_locus, aes(x = avg_fwd_err, y = avg_rev_err)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey60") + # line where fwd and rv error rates are equal
+  geom_point(shape = 21, size = 2.5, fill = primer_error_colour, colour = darken_colour(primer_error_colour), alpha = 0.8, stroke = 0.5) +
+  scale_x_continuous(breaks = primer_error_breaks, limits = primer_error_range) +
+  scale_y_continuous(breaks = primer_error_breaks, limits = primer_error_range) +
+  coord_equal() +
+  labs(title = "Forward vs reverse primer errors per locus", x = "Average forward primer errors", y = "Average reverse primer errors") + 
+  obitools_plot_theme +
+  theme(panel.grid.major.x = element_line(colour = "grey92"))
+
+ggsave(file.path(obitools_summaries_folder, "Primer_error_scatter.png"), primer_errors_plot, width = 8.27, height = 5.85, dpi = 300, bg = "white")
+ggsave(file.path(obitools_summaries_folder, "Primer_error_scatter.pdf"), primer_errors_plot, width = 8.27, height = 5.85, device = cairo_pdf)
+primer_errors_plot
+
+
+# 6. plot: Number of identified reads per loci and per sample, two violin plots on one panel
+identified_reads_distribution <- bind_rows(
+  summary_stats_named %>% transmute(group = "Per sample\n(summed over loci)", reads),
+  reads_per_locus %>% transmute(group = "Per locus\n(summed over samples)", reads = total_reads)) %>%
+  mutate(group = factor(group, levels = c("Per sample\n(summed over loci)", "Per locus\n(summed over samples)")))
+
+identified_reads_medians <- identified_reads_distribution %>%
+  group_by(group) %>%
+  summarise(median_reads = median(reads), max_reads = max(reads)) %>%
+  mutate(group_position = as.numeric(group),
+         label_y = max(max_reads) * 1.1) # Both labels at the same height
+
+set.seed(1)
+
+identified_reads_violin_plot <- ggplot(identified_reads_distribution, aes(x = group, y = reads)) +
+  geom_violin(aes(fill = group, colour = group), alpha = 0.8, linewidth = 0.4, width = 0.8) +
+  geom_boxplot(width = 0.12, fill = NA, colour = "grey20", linewidth = 0.3, outlier.shape = NA) + 
+  geom_jitter(width = 0.08, height = 0, shape = 21, size = 1.6, fill = "grey25", colour = "white", stroke = 0.3, alpha = 0.9) + 
+  geom_point(data = identified_reads_medians, aes(x = group_position, y = median_reads), colour = "#A6513B", size = 2.8, inherit.aes = FALSE) +
+  geom_segment(data = identified_reads_medians, aes(x = group_position, xend = group_position, y = max_reads, yend = label_y),
+               linetype = "dashed", colour = "grey30", linewidth = 0.3, inherit.aes = FALSE) +
+  geom_label(data = identified_reads_medians, aes(x = group_position, y = label_y, label = paste("median =", label_comma()(median_reads))),
+             vjust = 0, size = 2.8, family = plot_font, inherit.aes = FALSE) +
+  scale_fill_manual(values = obitools_palette[c(2, 1)], guide = "none") +
+  scale_colour_manual(values = darken_colour(obitools_palette[c(2, 1)]), guide = "none") +
+  scale_y_continuous(labels = label_comma(), limits = c(0, NA), expand = expansion(mult = c(0, 0.12))) +
+  labs(title = "Distribution of identified reads per sample and per loci", x = NULL, y = "Reads") +
+  obitools_plot_theme
+
+ggsave(file.path(obitools_summaries_folder, "Identified_reads_per_sample_and_locus.png"), identified_reads_violin_plot, width = 5.85, height = 5.85, dpi = 300, bg = "white")
+ggsave(file.path(obitools_summaries_folder, "Identified_reads_per_sample_and_locus.pdf"), identified_reads_violin_plot, width = 5.85, height = 5.85, device = cairo_pdf)
+identified_reads_violin_plot
+
+#Summary panel: Combined plots into one panel for better visualisation
+panel_text_size <- theme(plot.title = element_text(size = 10, face = "bold", hjust = 0),
+                         plot.title.position = "plot", # Title start on the left side next to the letter
+                         axis.title = element_text(size = 8), 
+                         axis.text = element_text(size = 7),
+                         legend.text = element_text(size = 6.5))
+
+# Panel is on a 2 by 2 grid, A and C on the left column and B and D on the right so everything lines up nicely
+obitools_summary_panel <- (identified_reads_violin_plot + labs(title = "A   Distribution of identified reads") + panel_text_size) +
+  (avg_length_plot + labs(title = "B   Average length per sample") + panel_text_size) +
+  (unidentified_errors_plot + labs(title = paste0("C   Unidentified reads per sample, by error type", error_title_tag)) + panel_text_size) +
+  (primer_errors_plot + labs(title = "D   Primer errors per locus") + panel_text_size +
+     coord_cartesian()) + 
+  plot_layout(ncol = 2, widths = c(2.2, 1), heights = c(1, 1.05))
+
+ggsave(file.path(obitools_summaries_folder, "ObiTools4_Summary_Panel.png"), obitools_summary_panel, width = 11.69, height = 8.27, dpi = 300, bg = "white")
+ggsave(file.path(obitools_summaries_folder, "ObiTools4_Summary_Panel.pdf"), obitools_summary_panel, width = 11.69, height = 8.27, device = cairo_pdf)
+```
+
+
+```{r summary_panel, fig.width = 11.69, fig.height = 8.27, out.width = "100%"}
+obitools_summary_panel
+```
+
+
+
+## Timing Summary
+
+```{r Timing_Summary}
+# Timing breakdown for speed optimization analysis
+stage02_timing <- do.call(rbind, timing_log)
+write_tsv(stage02_timing, file.path(obitools_summaries_folder, "timing_breakdown_02.tsv"))
+stage02_timing$step_type <- sub(".*: ", "", stage02_timing$step)
+stage02_timing_summary <- aggregate(seconds ~ step_type, data = stage02_timing, sum)
+stage02_timing_summary$seconds <- round(stage02_timing_summary$seconds, 2)
+stage02_timing_summary
+```
+
+## Reproducibility
+
+<details><summary>Session info and tool versions</summary>
+
+```{r session_info}
+sessionInfo()
+cat("obicsv:", system("obicsv --version 2>&1", intern = TRUE)[1], "\n")
+cat("obisummary:", system("obisummary --version 2>&1", intern = TRUE)[1], "\n")
+```
+
+</details>

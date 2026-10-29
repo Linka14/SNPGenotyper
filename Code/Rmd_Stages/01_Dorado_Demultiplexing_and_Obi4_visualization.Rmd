@@ -1,0 +1,282 @@
+---
+title: "Stage 01: Dorado demultiplexing and obimultiplex"
+subtitle: "`r paste0('Dataset: ', params$dataset_name, ' - ', params$n_barcodes, ' barcodes')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: hide
+    df_print: kable
+    highlight: tango
+    theme:
+      version: 5
+      bg: "#FFFFFF"
+      fg: "#2E2A26"
+      primary: "#657359"
+      secondary: "#8B775F"
+      base_font: "Times New Roman"
+      heading_font: "Times New Roman"
+      headings-font-weight: 700
+      code_font:
+        google: "JetBrains Mono"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+params:
+  # Dataset
+  dataset_name: "small" # or "big"
+  n_barcodes: 6 # or 24
+
+  # Paths to the tools this script uses, paste the bin paths in Master_Pipeline.Rmd to Dorado and ObiTools4 so it works
+  dorado_bin_folder: "" # found automatically or paste the path
+  obitools_bin_folder: "" # found automatically
+
+  # Settings for Dorado demux
+  run_dorado: true # false skips dorado when demultiplexed files already exist
+  kit_name: "SQK-NBD114-24" # Nanopore barcoding kit
+
+  # NGSFilter file for obimultiplex, created manually (see the ObiTools4 documentation for its format), path from the project folder
+  ngsfilter_path: "Data/Supporting_data/NGSfilter_file/ngsfilter.csv"
+---
+
+```{r knitr_options, include = FALSE}
+library(knitr)
+opts_chunk$set(comment = "", message = FALSE)
+```
+
+```{css, echo = FALSE}
+pre, pre code { white-space: pre-wrap; word-break: break-word; }
+.scroll-output { max-height: 250px; overflow-y: auto; }
+```
+
+This is the first script one should run before using any R scripts or genotyping functions. All editable settings are in the YAML header above or in Master_Pipeline.Rmd (settings_01), with comments explaining the settings. All paths are written from the project folder (Full_workflow), except full paths for preinstalled tools. 
+After completing this script, move on to 02_ObiTools4_Basic_Visualisation.Rmd
+
+
+
+## Settings, paths and basic setup
+Chunk contains settings, paths to the installed tools and a timing function for speed optimization analysis.
+
+```{r setup}
+suppressMessages({
+  library(dplyr)
+  library(readr)
+})
+
+# Uploading shared functions
+source("Code/R_scripts/asp_functions.R", local = TRUE) 
+
+# Empty timing log for calculating elapsed time, all the scripts use the same shared function
+timing_log <- list() 
+
+# Settings come from the params block in the YAML header, this turns them into usable variables
+invisible(list2env(params, envir = environment()))
+
+# Paths to the installed Dorado and ObiTools4 directories so R can find the commands
+login_shell_path <- tryCatch(system2(Sys.getenv("SHELL", "/bin/zsh"), c("-ilc", shQuote("echo $PATH")), stdout = TRUE, stderr = FALSE, timeout = 10),
+                             error = function(e) "", warning = function(w) "") # PATH from the user's terminal settings, RStudio does not read them
+tool_search_folders <- unique(path.expand(c(dorado_bin_folder, obitools_bin_folder, # YAML folders first, a set path always wins
+                                            strsplit(tail(c("", login_shell_path), 1), ":")[[1]],
+                                            rev(Sys.glob(path.expand(c("~/*/bin", "~/*/*/bin", "~/*/*/*/bin")))), # unpacked anywhere in the home folder, newest version first
+                                            Sys.glob(path.expand(c("~/*conda*/bin", "~/*conda*/envs/*/bin", "~/mambaforge/envs/*/bin"))), # conda installs
+                                            "/usr/local/bin", "/opt/homebrew/bin", Sys.glob("/opt/*/bin"))))
+needed_tools <- c("dorado", "obimultiplex")
+tool_folders <- sapply(needed_tools, function(tool) {
+  found_in <- tool_search_folders[file.exists(file.path(tool_search_folders, tool))]
+  if (length(found_in) == 0) stop(tool, " not found. Install it, or paste its bin folder into the YAML (dorado_bin_folder / obitools_bin_folder)")
+  found_in[1]
+})
+Sys.setenv(PATH = paste(c(unique(tool_folders), Sys.getenv("PATH")), collapse = ":")) # only the folders that hold the tools are added
+cat("Using:\n", paste(file.path(tool_folders, needed_tools), collapse = "\n "), "\n")
+
+tool_paths <- Sys.which(c("dorado", "obimultiplex"))
+if (any(tool_paths == "")) stop("not found: ", paste(names(tool_paths)[tool_paths == ""], collapse = ", "),
+                                ". Install it, or paste its bin folder into dorado_bin_folder / obitools_bin_folder in the YAML")
+cat("Using:\n", paste(tool_paths, collapse = "\n "), "\n")
+
+barcode_numbers <- sprintf("%02d", seq_len(n_barcodes))
+demultiplexed_folder <- file.path("Data/Processed_data", dataset_name, "Demultiplexed_sequence_data")
+dorado_output_folder <- file.path(demultiplexed_folder, "Dorado_demultiplexed_by_sample")
+dir.create(dorado_output_folder, showWarnings = FALSE, recursive = TRUE)
+identified_folder <- file.path(demultiplexed_folder, "Identified_sample_sequences_Obi4")
+unidentified_folder <- file.path(demultiplexed_folder, "Unidentified_sample_sequences_Obi4")
+dir.create(identified_folder, showWarnings = FALSE, recursive = TRUE)
+dir.create(unidentified_folder, showWarnings = FALSE, recursive = TRUE)
+
+# Settings used each run saved directly inside the output folder, useful for reproducibility
+settings_used <- data.frame(setting = c("run_date", names(params)),
+                            value = c(format(Sys.time(), "%Y-%m-%d %H:%M"),
+                                      vapply(params, function(setting_value) paste(setting_value, collapse = ", "), character(1))))
+
+write.table(settings_used, file.path(demultiplexed_folder, "Dorado_demultiplexed_by_sample/settings_used_01.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(settings_used, file.path(demultiplexed_folder, "Identified_sample_sequences_Obi4/settings_used_01.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(settings_used, file.path(demultiplexed_folder, "Unidentified_sample_sequences_Obi4/settings_used_01.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+<details><summary>Settings used for this run</summary>
+
+```{r settings_table, echo = FALSE}
+kable(settings_used, row.names = FALSE, col.names = c("Setting", "Value"))
+```
+
+</details>
+
+
+## First demultiplexing: Dorado demux
+This chunk creates Dorado demultiplexed sequence data which is separated/demultiplexed by sample and creates one unclassified sequence data file.
+Basic Dorado "demux" bash command line function converted to run in R. User should first install the Dorado toolbox using the command line and paste the path to its bin directory into dorado_bin_folder. The input is the single basecalled .bam or .fastq file in Data/Raw_data/dataset_name (the small dataset is a .bam, the big one a .fastq because of its naming structure). After executing this chunk user can find Dorado's demultiplexed sequences separated into samples, plus unclassified sequences which weren't able to be confidently assigned to a specific Nanopore barcode.
+
+```{r First_Demultiplexing_Dorado_Demux, class.output = "scroll-output"}
+# Basecalled input for the data set, first searches for .fastq, then for .bam (with .bam some headers a bit different, it's better to use .fastq)
+raw_reads_folder <- file.path("Data/Raw_data", dataset_name)
+dorado_input_reads <- list.files(raw_reads_folder, pattern = "\\.fastq$", full.names = TRUE) #searches for files ending with .fastq
+if (length(dorado_input_reads) == 0) dorado_input_reads <- list.files(raw_reads_folder, pattern = "\\.bam$", full.names = TRUE)
+if (length(dorado_input_reads) != 1) stop(sprintf("Expected one .fastq (or one .bam) file in %s, found %d", raw_reads_folder, length(dorado_input_reads)))
+
+# Running dorado command, runs only if run_dorado is TRUE
+if (run_dorado) {
+  dorado_command <- sprintf("dorado demux --kit-name %s --output-dir %s --emit-fastq --no-trim %s",
+    shQuote(kit_name), shQuote(dorado_output_folder), shQuote(dorado_input_reads)) # Wraps it in quotes
+  cat("Running:\n", dorado_command, "\n\n")
+  dorado_start <- Sys.time()
+  dorado_exit_status <- system(dorado_command) # Runs it as a terminal command
+  if (dorado_exit_status != 0) stop("dorado demux failed, see the output above")
+  log_time("dorado demux (all barcodes)", dorado_start)
+} else {
+  cat("run_dorado = FALSE: dorado demux skipped, using the existing files in", dorado_output_folder, "\n")
+}
+```
+
+
+
+## Dorado output Unnesting
+These files are automatically nested a couple of folders deep by the MinKNOW software. The next chunk finds every barcode's .fastq file automatically and copies it flat to Data/Processed_data/dataset_name/Demultiplexed_sequence_data/Dorado_demultiplexed_by_sample as barcode01.fastq, barcode02.fastq, ... for ease of use later.
+This part moves the actual .fastq files from their automatically nested position (several folders deep, the run folder name changes every time dorado runs) to the Dorado_demultiplexed_by_sample folder as barcodeXX.fastq.
+
+```{r Dorado_Output_Unnesting}
+# Finds every .fastq file in Dorado’s output folder
+nested_fastq_files <- list.files(dorado_output_folder, pattern = "\\.fastq$", recursive = TRUE, full.names = TRUE)
+nested_fastq_files <- nested_fastq_files[dirname(nested_fastq_files) != dorado_output_folder] # skips any earlier copies from previous runs
+
+flatten_start <- Sys.time()
+for (barcode_number in barcode_numbers) {
+  barcode_fastq_files <- nested_fastq_files[basename(dirname(nested_fastq_files)) == paste0("barcode", barcode_number)]
+
+  if (length(barcode_fastq_files) == 0) {
+    cat(sprintf("barcode%s: no .fastq file found in %s\n", barcode_number, dorado_output_folder))
+    next
+  }
+  if (length(barcode_fastq_files) > 1) { # if there are several Dorado files inside the folder it uses the newest
+    barcode_fastq_files <- barcode_fastq_files[order(file.mtime(barcode_fastq_files), decreasing = TRUE)]
+    cat(sprintf("barcode%s: multiple .fastq files found, using the newest: %s\n", barcode_number, barcode_fastq_files[1]))
+  }
+
+  # trimmed destination is "barcode01...24.fastq"
+  flat_fastq_path <- file.path(dorado_output_folder, sprintf("barcode%s.fastq", barcode_number))
+  copy_success <- file.copy(barcode_fastq_files[1], flat_fastq_path, overwrite = TRUE)
+  if (!copy_success) cat(sprintf("barcode%s: copy failed (%s -> %s)\n", barcode_number, barcode_fastq_files[1], flat_fastq_path))
+}
+
+# the unclassified reads are copied the same way just for uniformity, they are not used in the later chunks
+unclassified_fastq_files <- nested_fastq_files[basename(dirname(nested_fastq_files)) == "unclassified"]
+if (length(unclassified_fastq_files) == 0) {
+  cat(sprintf("unclassified: NO .fastq FILE FOUND in %s\n", dorado_output_folder))
+} else {
+  unclassified_fastq_files <- unclassified_fastq_files[order(file.mtime(unclassified_fastq_files), decreasing = TRUE)] # Newest first again
+  copy_success <- file.copy(unclassified_fastq_files[1], file.path(dorado_output_folder, "unclassified.fastq"), overwrite = TRUE)
+  if (!copy_success) cat(sprintf("unclassified: COPY FAILED (%s)\n", unclassified_fastq_files[1]))
+}
+
+log_time("file copy, nested->flat (all barcodes)", flatten_start)
+```
+
+
+
+## NGSFilter file importing and cleaning 
+This chunk imports the NGSfilter file needed for ObiTools4 obimultiplexing. The file is made by hand beforehand (primers, sample tags and all @param settings such as matching, primer_mismatches or primer specific mismatches) and its path is set in ngsfilter_path. The chunk cleans the file (trailing commas and spaces, spaces around commas, Windows line endings, empty lines), because these can cause problems in obimultiplex. It saves the cleaned version over the original.
+
+::: {.alert .alert-warning}
+!Important note!: the sample column can be filled with a basic "sample" tag. It could have been filled with sample names, but that would mean every single sample would need a different ngsfilter so it is properly named in the first lines of the .fastq header. This is not actually necessary, because the header also contains the barcode names, plus every file is already named after its barcode (barcode01-06-24). Future scripts extract the barcode name from the file name, so the generation of multiple per sample NGSFilter files is not needed.
+:::
+
+```{r NGSfilter_File_Importing_and_Cleaning, class.output = "scroll-output"}
+if (!file.exists(ngsfilter_path)) stop(sprintf("ngsfilter file not found: %s", ngsfilter_path))
+ngsfilter_start <- Sys.time()
+
+ngsfilter_raw_lines <- readLines(ngsfilter_path, warn = FALSE)
+
+# cleans every line and strips the trailing commas and spaces which can cause problems in obimultiplex
+ngsfilter_clean_lines <- sub("^\ufeff", "", ngsfilter_raw_lines) # invisible BOM character Excel puts at the start
+ngsfilter_clean_lines <- gsub("\r", "", ngsfilter_clean_lines) # Windows line endings
+ngsfilter_clean_lines <- gsub("[ \t]*,[ \t]*", ",", ngsfilter_clean_lines) # spaces around commas
+ngsfilter_clean_lines <- sub("[, \t]+$", "", ngsfilter_clean_lines) # trailing commas and spaces
+ngsfilter_clean_lines <- sub("^[ \t]+", "", ngsfilter_clean_lines) # leading spaces
+ngsfilter_clean_lines <- ngsfilter_clean_lines[ngsfilter_clean_lines != ""] # empty lines
+ngsfilter_clean_lines <- sub("^(@param,[^,]+,)(TRUE|FALSE)$", "\\1\\L\\2", ngsfilter_clean_lines, perl = TRUE) # Excel saves true/false as TRUE/FALSE, obimultiplex needs lowercase
+
+# one shared NGSfilter file for every barcode, the cleaned version is saved over the original
+writeLines(ngsfilter_clean_lines, ngsfilter_path)
+cat(sprintf("NGSfilter cleaned and saved: %s (%d lines)\n", ngsfilter_path, length(ngsfilter_clean_lines)))
+cat(head(ngsfilter_clean_lines, sum(grepl("^@param", ngsfilter_clean_lines)) + 2), sep = "\n") # Prints all the param settings and first locus
+log_time("ngsfilter.csv import and cleaning", ngsfilter_start)
+```
+
+
+
+## Second demultiplexing: ObiTools4 Demultiplexing
+This chunk does the ObiTools4 obimultiplexing, it executes the bash command line function in R similar to the previous chunk. It uses the cleaned NGSFilter file with STA and LSP primers. It loops through all the samples and separates identified and unidentified reads into separate folders.
+
+```{r Second_Demultiplexing_ObiTools4_Demultiplexing, class.output = "scroll-output"}
+# loops through all the samples and separates identified and unidentified reads
+for (barcode_number in barcode_numbers) {
+  barcode_fastq_path <- file.path(dorado_output_folder, sprintf("barcode%s.fastq", barcode_number))
+  if (!file.exists(barcode_fastq_path)) {
+    cat(sprintf("barcode%s: input not found, skipped (%s)\n", barcode_number, barcode_fastq_path))
+    next
+  }
+
+  obimultiplex_command <- sprintf("obimultiplex --tag-list %s --fastq %s -o %s -u %s",
+    shQuote(ngsfilter_path),
+    shQuote(barcode_fastq_path),
+    shQuote(file.path(identified_folder, sprintf("barcode%s_identified.fastq", barcode_number))),
+    shQuote(file.path(unidentified_folder, sprintf("barcode%s_unidentified.fastq", barcode_number))))
+
+  obimultiplex_start <- Sys.time()
+  obimultiplex_exit_status <- system(obimultiplex_command)
+  if (obimultiplex_exit_status != 0) cat(sprintf("barcode%s: obimultiplex FAILED, see the output above\n", barcode_number))
+  log_time(sprintf("barcode%s: obimultiplex", barcode_number), obimultiplex_start)
+}
+# The NGSFilter this run used, copy is saved next to identified sequences so the wrong primer hits analysis chunk can't accidentally use identified sequence and a different modified NGSFilter file which would give wrong results.
+invisible(file.copy(ngsfilter_path, file.path("Data/Processed_data", dataset_name, "Demultiplexed_sequence_data/Identified_sample_sequences_Obi4", "Applied_NGSFilter_file.csv"), overwrite = TRUE))
+```
+
+
+
+## Timing Summary
+
+```{r Timing_Summary}
+# timing breakdown for speed optimization analysis
+stage01_timing <- do.call(rbind, timing_log)
+write_tsv(stage01_timing, file.path(demultiplexed_folder, "Dorado_demultiplexed_by_sample/timing_log_01.tsv"))
+write_tsv(stage01_timing, file.path(demultiplexed_folder, "Identified_sample_sequences_Obi4/timing_log_01.tsv"))
+write_tsv(stage01_timing, file.path(demultiplexed_folder, "Unidentified_sample_sequences_Obi4/timing_log_01.tsv"))
+stage01_timing$step_type <- sub(".*: ", "", stage01_timing$step)
+stage01_timing_summary <- aggregate(seconds ~ step_type, data = stage01_timing, sum)
+stage01_timing_summary$seconds <- round(stage01_timing_summary$seconds, 2)
+stage01_timing_summary
+```
+
+
+
+## Reproducibility
+
+<details><summary>Session info and tool versions</summary>
+
+```{r session_info}
+sessionInfo()
+cat("dorado:", system("dorado --version 2>&1", intern = TRUE)[1], "\n")
+cat("obimultiplex:", system("obimultiplex --version 2>&1", intern = TRUE)[1], "\n")
+```
+
+</details>
+

@@ -1,0 +1,468 @@
+---
+title: "Failed Genotypes Analysis"
+subtitle: "`r paste0('Dataset: ', params$dataset_name)`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: hide
+    df_print: kable
+    highlight: tango
+    theme:
+      version: 5
+      bg: "#FFFFFF"
+      fg: "#2E2A26"
+      primary: "#657359"
+      secondary: "#8B775F"
+      base_font: "Times New Roman"
+      heading_font: "Times New Roman"
+      headings-font-weight: 700
+      code_font:
+        google: "JetBrains Mono"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+params:
+  # Dataset
+  dataset_name: "big" # small or big
+  barcode_map_path: "Data/Supporting_data/Samples_ONT_barcodes.tsv"
+  primer_panel_path: "Data/Supporting_data/Primer_panels/12864_2021_7761_MOESM12_ESM_filtered.xlsx"
+  reference_path: "Data/Supporting_data/Genome_reference_data/snps_500bp_sequences.fa"
+
+  # ASP run to analyse (same settings as ASP genotyping, they make up its results folder name)
+  input_type: "unpadded" # "padded" or "unpadded"
+  use_anchors: true
+  anchor_length: 3
+  threshold_type: "errors" # "fraction" or "errors"
+  min_score_fraction: 0.65 # "fraction" only
+  error_rate: 0.08 # "errors" only
+
+  # Bayesian run to analyse (only used when failed_genotypes_source is "bayes_genotypes")
+  prior_type: "flat"
+  prior_het_share: 0.15
+  prior_population: "FreqWOLF_all"
+  prior_floor: 0.001
+
+  # This stage
+  failed_genotypes_source: "bayes_genotypes" # "bayes_genotypes" or "asp_genotypes": whose genotype calls are compared with the reference
+  failed_max_reads_plotted: 20 # reads drawn per plot, the .tsv table keeps every read
+---
+
+```{r knitr_options, include = FALSE}
+library(knitr)
+opts_chunk$set(comment = "", message = FALSE, class.output = "scroll-output")
+```
+
+```{css, echo = FALSE}
+pre, pre code { white-space: pre-wrap; word-break: break-word; }
+.scroll-output { max-height: 250px; overflow-y: auto; }
+```
+
+This script is for analysis of failed genotypes calls. It was mainly used when developing and troubleshooting the main MiniMap2 and ASP scripts. It makes a pretty graph where I tried to present amplicons with ASP primer alignment and coloured mismatches and SNP bases based on Phred quality scores. Also contains cool carousel like visuals to signify the amplicon is longer than whats presented.
+
+Which genotype calls are checked is set with failed_genotypes_source (Bayesian or plain ASP calls). Only the reads that voted in the ASP run are used, so the run's own threshold (errors or fraction) and SNP checks decide which reads are shown. The reads are aligned again only to find where the SNP, the mismatches and the anchor bases sit in each read.
+
+## Settings, paths and the primer panel
+
+```{r setup}
+suppressMessages({
+  library(Biostrings)
+  library(pwalign)
+  library(dplyr)
+  library(readr)
+  library(readxl)
+  library(ggplot2)
+  library(scales)
+  library(knitr)
+})
+
+# Settings come from the params block in the YAML header, this turns them into usable variables
+invisible(list2env(params, envir = environment()))
+# Uploading shared functions
+source("Code/R_scripts/asp_functions.R", local = TRUE)
+
+
+plot_font <- "Times New Roman"
+theme_set(theme_minimal(base_family = plot_font))
+
+timing_log <- list() 
+
+# Folder names are built with a shared function inside asp_functions.R, it gives a unique name based on changed settings for every run. If you use the same settings to rerun it again it gets overwritten. 
+run_names <- build_run_names(input_type, use_anchors, anchor_length, threshold_type, error_rate, min_score_fraction,
+                             prior_type, prior_het_share, prior_population, prior_floor)
+genotypes_dir <- file.path("Results", dataset_name, "Genotypes_results")
+failed_genotypes_path <- switch(failed_genotypes_source,
+                                asp_genotypes = file.path(genotypes_dir, run_names$asp_run_name, "all_barcodes_asp_genotypes.tsv"),
+                                bayes_genotypes = file.path(genotypes_dir, run_names$bayes_run_name, "all_barcodes_base_mixture_genotypes_hierarchical.tsv"),
+                                stop("failed_genotypes_source must be \"bayes_genotypes\" or \"asp_genotypes\""))
+
+failed_reads_path <- file.path(genotypes_dir, run_names$asp_run_name, "all_barcodes_asp_reads.tsv")
+reference_genotypes_path <- file.path("Data/Supporting_data/Reference_genotypes", paste0("genotypes_", dataset_name, ".tsv"))
+for (needed_file in c(failed_genotypes_path, failed_reads_path, reference_genotypes_path)) {
+  if (!file.exists(needed_file)) stop("file not found, run the earlier stages with the same settings first: ", needed_file)
+}
+
+# Output folders
+failed_run_label <- basename(dirname(failed_genotypes_path))
+out_dir_failed <- file.path("Results", dataset_name, "Graphics/Failed_genotypes_analysis", failed_run_label)
+dir.create(out_dir_failed, showWarnings = FALSE, recursive = TRUE)
+
+# Same primer panel preparation as in the ASP genotype pipeline
+panel <- prepare_primer_panel(primer_panel_path, reference_path, input_type, use_anchors, anchor_length)
+
+# Barcode name mapping
+barcode_map <- read_tsv(barcode_map_path, show_col_types = FALSE) %>%
+  filter(dataset == dataset_name) %>%
+  mutate(barcode_num = sub("^[A-Za-z]+", "", barcode))
+```
+
+
+
+## Failed genotypes
+
+Every sample x locus pair where the called genotype differs from the reference genotype. Pairs without a call or without a reference genotype are not miscalls and are left out.
+
+```{r Failed_Genotypes}
+# Reads the full genotypes table and reference table
+failed_calls <- read_tsv(failed_genotypes_path, show_col_types = FALSE, col_types = cols(genotype = col_character(), .default = col_guess())) %>%
+  select(sample = barcode, locus, called_genotype = genotype)
+reference_genotypes <- read_tsv(reference_genotypes_path, show_col_types = FALSE, col_types = cols(.default = col_character())) %>%
+  select(sample = sample_id, locus, reference_genotype = genotype)
+
+failed_markers <- failed_calls %>%
+  inner_join(reference_genotypes, by = c("sample", "locus")) %>%
+  filter(!is.na(called_genotype), !is.na(reference_genotype)) %>%
+  mutate(across(c(called_genotype, reference_genotype), # Alphabetically sorted so all HT are the same
+                ~ paste0(pmin(substr(.x, 1, 1), substr(.x, 2, 2)), pmax(substr(.x, 1, 1), substr(.x, 2, 2))))) %>%
+  filter(called_genotype != reference_genotype) %>% # Filters for failed genotypes only
+  arrange(locus, sample)
+
+failed_counter_summary <- failed_markers %>%
+  summarise(times_failed = n(),
+            miscalls = paste0(sample, " (", called_genotype, " vs ", reference_genotype, ")", collapse = ", "), # e.g. W215294 (CT vs TT)
+            .by = locus) %>%
+  arrange(desc(times_failed))
+
+write_tsv(failed_markers, file.path(out_dir_failed, "Failed_markers_detail.tsv"))
+write_tsv(failed_counter_summary, file.path(out_dir_failed, "Failed_markers_summary.tsv"))
+
+cat(sprintf("%s: %d miscalled sample x locus pairs at %d loci (%d samples)\n", failed_run_label, nrow(failed_markers),
+            n_distinct(failed_markers$locus), n_distinct(failed_markers$sample)))
+
+kable(failed_counter_summary, col.names = c("Locus", "Times failed", "Sample (called vs reference)"))
+```
+
+
+
+## Reads of the failed genotypes
+
+The ASP reads table is filtered first: only reads of the miscalled pairs, and only reads that voted (called_allele not NA). Then each needed barcode's .fastq file is read once and only those reads are kept.
+
+```{r Failed_Reads, eval = nrow(failed_markers) > 0}
+reads_start <- Sys.time()
+
+# Reads the full reads table and joins or filters for failed called reads only
+failed_voting_reads <- read_tsv(failed_reads_path, show_col_types = FALSE,
+                                col_select = c(barcode, read_id, locus, direction, called_allele),
+                                col_types = cols(.default = col_character())) %>% # alleles as text
+  semi_join(failed_markers, by = c(barcode = "sample", "locus")) %>% 
+  filter(!is.na(called_allele))
+
+# This loops reads every failed pair and its .fastq file and keeps only the reads that voted
+fastq_read_tables <- list()
+for (sample_id in unique(failed_voting_reads$barcode)) {
+  barcode_number <- barcode_map$barcode_num[barcode_map$sample_id == sample_id] # proper barcode name
+  if (length(barcode_number) != 1) {
+    warning("no single barcode for sample ", sample_id, " in the barcode map, its reads are skipped")
+    next
+  }
+  fastq_path <- identified_file_names_f(barcode_number) # builds the path
+  if (!file.exists(fastq_path)) {
+    warning("fastq not found, skipped: ", fastq_path)
+    next
+  }
+  fastq_lines <- readLines(fastq_path)
+  header_lines <- seq(1, length(fastq_lines), by = 4) 
+  fastq_read_ids <- sub("^@", "", sub(" .*$", "", fastq_lines[header_lines])) # grabs the reads id
+  is_wanted <- fastq_read_ids %in% failed_voting_reads$read_id[failed_voting_reads$barcode == sample_id] # TRUE for this sample's voting reads
+  wanted <- header_lines[is_wanted] # header line numbers
+  fastq_read_tables[[sample_id]] <- data.frame(barcode = sample_id,
+                                               read_id = fastq_read_ids[is_wanted], # read ID 
+                                               sequence = toupper(fastq_lines[wanted + 1]),
+                                               quality = fastq_lines[wanted + 3])
+}
+
+failed_reads <- failed_voting_reads %>%
+  inner_join(bind_rows(fastq_read_tables), by = c("barcode", "read_id"))
+if (nrow(failed_reads) < nrow(failed_voting_reads)) {
+  warning(nrow(failed_voting_reads) - nrow(failed_reads), " voting reads were not found in the .fastq files (files changed since the ASP run?)")
+}
+
+log_time(sprintf("read: voting reads of %d pairs (%d reads)", nrow(failed_markers), nrow(failed_reads)), reads_start)
+```
+
+
+
+## Read alignment
+Every read of a pair is aligned to ASP1 and ASP2 in one batched call per primer, in the read's own direction as in the ASP genotyping (unpadded reads are already turned forward, padded reverse reads are matched to the reverse complemented primers). The better of the two shows where the primer, the SNP, the mismatches and the anchor bases sit in the read. One table row per read, and one plot per pair with up to failed_max_reads_plotted reads (both called alleles take turns, so a minority allele is not left out).
+
+```{r Alignment_Helper_Functions, eval = nrow(failed_markers) > 0}
+# It takes a read position ad returns  the base before and after it with Phred score
+get_neighbour_context_string <- function(seq_string, qual_string, pos) {
+  neighbours <- pos + c(-1, 0, 1) # neighbouring bases
+  neighbours[neighbours < 1 | neighbours > nchar(seq_string)] <- NA # NA outside the read
+  bases <- substring(seq_string, neighbours, neighbours) # gets the bases from the position
+  qualities <- (utf8ToInt(qual_string) - 33)[neighbours] # gets the Phred score
+  paste(sprintf("%s(%s)", bases, qualities), collapse = " | ") # for example T(12)|C(31)|C(29)
+}
+
+# This function translates alignemn ts columns into read positions. If there is a gap in the alignment it shifts the read positions and columns and I would get a wrong ending position. It returns a read position or NA if there is no base. It runs on every read in the aligment loop, it finds SNP position, mismatches, where the primers sits and quality lookup.
+map_alignment_positions <- function(al) {
+  is_read_base <- strsplit(as.character(pattern(al)), "")[[1]] != "-" # TRUE for a base and FALSE for a gap
+  ifelse(is_read_base, start(pattern(al)) + cumsum(is_read_base) - 1, NA)
+}
+```
+
+
+
+## Amplicon plots of the failed genotypes
+
+```{r Alignment_And_Amplicon_Plots, eval = nrow(failed_markers) > 0, results = "hold"}
+### Plots are made per pair, each plot holds all the votings reads for one locus sample pair
+
+# Plot layout variables
+flank <- 7
+taper_n <- 5
+taper_widths <- c(0.82, 0.66, 0.50, 0.36, 0.24)
+taper_text <- c(0.9, 0.78, 0.66, 0.54, 0.42) # smaller letter towards the end for carousel look
+
+# Colour palette
+quality_colours <- c("#A6513B", "#C9A66B", "#657359")
+primer_colour <- "#D7C9BE"
+flank_colour <- "#FAF6F3"
+anchor_colour <- "#7C97AB"
+
+read_result_tables <- list()
+plot_paths <- character(0)
+
+for (pair_index in seq_len(nrow(failed_markers))) {
+  sample_id <- failed_markers$sample[pair_index] # basic read info
+  locus_name <- failed_markers$locus[pair_index]
+  pair_reads <- failed_reads %>% filter(barcode == sample_id, locus == locus_name)
+  panel_row <- panel[panel$locus == locus_name, ]
+  if (nrow(pair_reads) == 0 || nrow(panel_row) != 1) {
+    cat(sprintf("%s / %s: no voting reads or no panel row, skipped\n", sample_id, locus_name))
+    next
+  }
+  pair_start <- Sys.time()
+
+  # Same alignments as in the genotyping function
+  asp1 <- DNAString(panel_row$asp1_seq)
+  asp2 <- DNAString(panel_row$asp2_seq)
+  primer_list <- list(asp1, reverseComplement(asp1), asp2, reverseComplement(asp2))
+  read_set <- DNAStringSet(pair_reads$sequence)
+  primer_alignments <- lapply(primer_list, function(primer) pairwiseAlignment(read_set, primer, type = "overlap"))
+  score_matrix <- do.call(cbind, lapply(primer_alignments, score)) # one row per read, one column per primer version
+  read_is_reverse <- input_type == "padded" & pair_reads$direction == "reverse" # directional aware for padded and unapadded versions
+  score_matrix[read_is_reverse, c(1, 3)] <- -Inf
+  score_matrix[!read_is_reverse, c(2, 4)] <- -Inf
+  best_index <- max.col(score_matrix, ties.method = "first")
+  perfect_scores <- c(score(pairwiseAlignment(asp1, asp1, type = "overlap")), score(pairwiseAlignment(asp2, asp2, type = "overlap")))
+
+  # Reads drawn in a plot, random order so different cases are visualized
+  set.seed(pair_index)
+  
+  plotted_reads <- pair_reads %>%
+    mutate(read_index = row_number(), random_rank = sample(n())) %>%
+    group_by(called_allele) %>%
+    mutate(rank_in_allele = rank(random_rank)) %>%
+    ungroup() %>%
+    arrange(rank_in_allele, called_allele) %>%
+    slice_head(n = failed_max_reads_plotted) %>%
+    pull(read_index)
+
+  read_rows <- list()
+  plot_rows <- list()
+  for (k in seq_len(nrow(pair_reads))) {
+    read_sequence <- pair_reads$sequence[k]
+    read_quality <- pair_reads$quality[k]
+    alignment <- primer_alignments[[best_index[k]]][k]
+    read_chars <- strsplit(as.character(pattern(alignment)), "")[[1]] # separates reads alignment characters
+    primer_chars <- strsplit(as.character(subject(alignment)), "")[[1]] # separates primers alignment characters
+    real_pos <- map_alignment_positions(alignment) # helper function gets the real positions
+    if (length(read_chars) == 0) next # no alignment 
+
+    is_asp1 <- best_index[k] %in% c(1, 2)
+    is_rc <- best_index[k] %in% c(2, 4)
+    snp_index <- if (is_rc) 1 else length(read_chars) # based RV or FWD it gets the SNP position (first or last)
+    snp_position <- real_pos[snp_index]
+    mismatch_index <- which(read_chars != primer_chars & !is.na(real_pos) & seq_along(read_chars) != snp_index) # separates SNP position from mismatches
+    mismatch_position <- real_pos[mismatch_index]
+
+    # anchor bases: the reference bases right after the SNP, read backwards from the SNP when the read matched the reverse complement
+    anchor_bases <- strsplit(panel_row$anchor, "")[[1]]
+    if (use_anchors && !is.na(panel_row$anchor) && length(anchor_bases) > 0 && !is.na(snp_position)) {
+      anchor_positions <- if (is_rc) snp_position - seq_along(anchor_bases) else snp_position + seq_along(anchor_bases)
+      expected_anchor <- if (is_rc) strsplit(as.character(complement(DNAString(panel_row$anchor))), "")[[1]] else anchor_bases
+      inside_read <- anchor_positions >= 1 & anchor_positions <= nchar(read_sequence)
+      anchor_positions <- anchor_positions[inside_read]
+      expected_anchor <- expected_anchor[inside_read]
+    } else {
+      anchor_positions <- integer(0)
+      expected_anchor <- character(0)
+    }
+    read_anchor <- if (length(anchor_positions) > 0) substring(read_sequence, anchor_positions, anchor_positions) else character(0)
+    anchor_mismatch_position <- anchor_positions[read_anchor != expected_anchor]
+
+    # Final results table
+    read_rows[[length(read_rows) + 1]] <- data.frame(
+      sample = sample_id,
+      locus = locus_name,
+      read_id = pair_reads$read_id[k],
+      direction = pair_reads$direction[k],
+      called_allele = pair_reads$called_allele[k], 
+      realigned_primer = if (is_asp1) "ASP1" else "ASP2",
+      realigned_allele = if (is_asp1) panel_row$allele1 else panel_row$allele2,
+      orientation = if (is_rc) "reverse complement" else "forward",
+      score = round(score_matrix[k, best_index[k]], 2),
+      perfect_match = score_matrix[k, best_index[k]] >= perfect_scores[if (is_asp1) 1 else 2] - 0.01,
+      n_mismatches = length(mismatch_position),
+      mismatch_contexts = paste(vapply(mismatch_position, get_neighbour_context_string, character(1), seq_string = read_sequence, qual_string = read_quality), collapse = "  ||  "),
+      snp_context = get_neighbour_context_string(read_sequence, read_quality, snp_position),
+      anchor_read = paste(read_anchor, collapse = ""),
+      anchor_reference = paste(expected_anchor, collapse = ""),
+      n_anchor_mismatches = length(anchor_mismatch_position))
+
+    if (!k %in% plotted_reads) next
+
+    primer_start <- min(real_pos, na.rm = TRUE)
+    primer_end <- max(real_pos, na.rm = TRUE)
+    normal_left <- primer_start - flank # Creates positions of starting flanking areas for graphs
+    normal_right <- primer_end + flank
+    seq_chars <- strsplit(read_sequence, "")[[1]]
+    keep_positions <- seq(max(1, normal_left - taper_n), min(length(seq_chars), normal_right + taper_n)) #positions of bases shown on graphs
+
+    taper_step <- pmax(normal_left - keep_positions, keep_positions - normal_right, 0) # 0 inside the normal area, 1 to 5 going out into the taper
+    widths <- c(1, taper_widths)[taper_step + 1]
+    textmults <- c(1, taper_text)[taper_step + 1]
+    tile_right_edge <- cumsum(widths) #cummulative sum gets you right edge 0.24, 0.36, 0.50  -> 0.24, 0.60, 1.10
+    tile_left_edge <- tile_right_edge - widths # and this the left one 0, 0.24, 0.60
+    tile_center <- (tile_left_edge + tile_right_edge) / 2 # the average then gives you the centre of the tile
+    snp_local_index <- which(keep_positions == snp_position)
+    snp_shift <- if (length(snp_local_index) == 1) tile_center[snp_local_index] else 0 #gets the tile centre of the SNP position
+    tiles_centered_at_snp <- tile_center - snp_shift #snp position is now 0, every other is shifted
+
+    base_quality <- (utf8ToInt(read_quality) - 33)[keep_positions] # Phred scores of the shown bases
+    category <- case_when(
+      keep_positions %in% snp_position ~ "SNP position",
+      keep_positions %in% c(mismatch_position, anchor_mismatch_position) ~ "Mismatch",
+      keep_positions %in% anchor_positions ~ "Anchor",
+      keep_positions >= primer_start & keep_positions <= primer_end ~ "Primer",
+      .default = "Flank")
+    plot_row_number <- match(k, plotted_reads)
+
+    plot_rows[[length(plot_rows) + 1]] <- data.frame( #saves all the formatting data of the read in one dataframe appended to a list
+      y_label_for_reads = sprintf("%02d  voted %s | %s %s", plot_row_number, pair_reads$called_allele[k],
+                                  if (is_asp1) "ASP1" else "ASP2", if (is_rc) "rc" else "fwd"),
+      tiles_centered_at_snp = tiles_centered_at_snp,
+      displayed_width = widths,
+      text_mult = textmults,
+      base = seq_chars[keep_positions],
+      quality = base_quality,
+      category = category)
+  }
+
+  log_time(sprintf("align: %s / %s (%d reads)", sample_id, locus_name, nrow(pair_reads)), pair_start)
+  
+  read_result_tables[[paste(sample_id, locus_name)]] <- bind_rows(read_rows)
+  if (length(plot_rows) == 0) next # no read of this pair could be drawn
+  plot_data <- bind_rows(plot_rows) #binds all the rows
+  
+  plot_data$y_label_for_reads <- factor(plot_data$y_label_for_reads, levels = rev(sort(unique(plot_data$y_label_for_reads)))) # ggplot draws y factors from the bottom up, reversed so read 01 is on top
+  flank_tiles <- plot_data %>% filter(category == "Flank")
+  primer_tiles <- plot_data %>% filter(category == "Primer")
+  anchor_tiles <- plot_data %>% filter(category == "Anchor")
+  quality_tiles <- plot_data %>% filter(category %in% c("SNP position", "Mismatch"))
+  snp_tiles <- plot_data %>% filter(category == "SNP position")
+  n_reads_plotted <- length(unique(plot_data$y_label_for_reads))
+  
+  # legend squares for the tile colours, the anchor only when anchors are used
+  region_keys <- c("Primer", "Flank (amplicon continues)", if (use_anchors) "Anchor", "SNP base (outlined)")
+  region_fills <- c(primer_colour, flank_colour, if (use_anchors) anchor_colour, "white")
+  region_outlines <- c(primer_colour, "grey80", if (use_anchors) anchor_colour, "grey10")
+  
+  amplicon_plot <- ggplot(plot_data, aes(x = tiles_centered_at_snp, y = y_label_for_reads)) +
+    geom_tile(data = flank_tiles, aes(width = displayed_width, height = 0.75 + 0.1 * text_mult), fill = flank_colour, color = "white", linewidth = 0.3) +
+    geom_text(data = flank_tiles, aes(label = base, size = 1.7 * text_mult), color = "grey55") +
+    geom_tile(data = primer_tiles, aes(width = displayed_width), fill = primer_colour, color = "white", linewidth = 0.4, height = 0.9) +
+    geom_text(data = primer_tiles, aes(label = base), size = 2.3, fontface = "bold", color = "grey15") +
+    geom_tile(data = anchor_tiles, aes(width = displayed_width), fill = anchor_colour, alpha = 0.8, color = "white", linewidth = 0.4, height = 0.9) +
+    geom_text(data = anchor_tiles, aes(label = base), size = 2.3, fontface = "bold", color = "white") +
+    geom_tile(data = quality_tiles, aes(fill = quality, width = displayed_width), alpha = 0.8, color = "white", linewidth = 0.4, height = 0.9) +
+    geom_tile(data = snp_tiles, aes(width = displayed_width), fill = NA, color = "grey10", linewidth = 0.5, height = 0.9) + # outline marks the SNP base
+    geom_text(data = quality_tiles, aes(label = base), size = 2.5, fontface = "bold", color = "grey10") +
+    geom_point(data = transform(plot_data[rep(1, length(region_keys)), ], region = factor(region_keys, levels = region_keys)),
+               aes(shape = region), alpha = 0) + 
+    scale_shape_manual(values = setNames(rep(22, length(region_keys)), region_keys), name = NULL) +
+    guides(shape = guide_legend(position = "bottom", nrow = 1,
+                                override.aes = list(alpha = 1, size = 4, stroke = 0.6, fill = region_fills, colour = region_outlines))) +
+    scale_fill_gradientn(colors = quality_colours, limits = c(0, 25), oob = squish, name = "Phred quality\n(SNP and\nmismatches)") +
+    scale_size_identity() +
+    labs(title = sprintf("%s - %s", sample_id, locus_name),
+         subtitle = sprintf("Called %s, reference %s - %d of %d voting reads shown", failed_markers$called_genotype[pair_index],
+                            failed_markers$reference_genotype[pair_index], n_reads_plotted, nrow(pair_reads)),
+         x = NULL, y = NULL) +
+    theme_minimal(base_size = 8, base_family = plot_font) +
+    theme(panel.grid = element_blank(),
+          axis.text.y = element_text(size = 6.5, hjust = 1, family = "mono"),
+          axis.text.x = element_blank(),
+          plot.title = element_text(hjust = 0.5, face = "bold"),
+          plot.subtitle = element_text(hjust = 0.5),
+          legend.key.height = unit(0.4, "cm"),
+          legend.key.width = unit(0.3, "cm"))
+
+  plot_file <- file.path(out_dir_failed, sprintf("%s_%s_amplicon_quality", sample_id, locus_name))
+  plot_height <- 1.3 + 0.24 * n_reads_plotted
+  plot_start <- Sys.time()
+  
+  ggsave(paste0(plot_file, ".png"), amplicon_plot, width = 8.27, height = plot_height, dpi = 300, bg = "white")
+  ggsave(paste0(plot_file, ".pdf"), amplicon_plot, width = 8.27, height = plot_height, device = cairo_pdf)
+  log_time(sprintf("ggsave: %s / %s (%d reads plotted)", sample_id, locus_name, n_reads_plotted), plot_start)
+  plot_paths <- c(plot_paths, paste0(plot_file, ".png"))
+}
+
+failed_read_results <- bind_rows(read_result_tables)
+write_tsv(failed_read_results, file.path(out_dir_failed, "Failed_marker_troubleshoot_detail.tsv"))
+
+# one row per pair: how the voting reads split and how often the realignment agrees with the run's vote
+failed_pair_summary <- failed_read_results %>%
+  group_by(sample, locus) %>%
+  summarise(voting_reads = n(),
+            votes = paste(names(table(called_allele)), table(called_allele), sep = ":", collapse = "/"),
+            realignment_agrees = sum(realigned_allele == called_allele),
+            mean_mismatches = round(mean(n_mismatches), 2),
+            reads_with_anchor_mismatch = sum(n_anchor_mismatches > 0),
+            .groups = "drop") %>%
+  left_join(failed_markers, by = c("sample", "locus"))
+write_tsv(failed_pair_summary, file.path(out_dir_failed, "Failed_pairs_read_summary.tsv"))
+kable(failed_pair_summary, col.names = c("Sample", "Locus", "Voting reads", "Votes", "Realignment agrees",
+                                         "Mean mismatches", "Reads with anchor mismatch", "Called", "Reference"))
+```
+
+```{r Amplicon_Plots_In_Report, eval = nrow(failed_markers) > 0, out.width = "100%"}
+# Renders the plots inside the html, this is used because plots are made in a loop a can be of varying heights, depending on the number of miscalled reads
+include_graphics(normalizePath(plot_paths), rel_path = FALSE)
+```
+
+
+## Timing summary
+
+```{r Timing_Summary}
+timing_summary <- bind_rows(timing_log)
+if (nrow(timing_summary) > 0) {
+  timing_summary$seconds <- round(timing_summary$seconds, 2)
+  write_tsv(timing_summary, file.path(out_dir_failed, "timing_breakdown_failed_analysis.tsv"))
+  timing_summary$step_type <- sub(":.*", "", timing_summary$step)
+  aggregate(seconds ~ step_type, data = timing_summary, sum)
+}
+```

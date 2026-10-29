@@ -1,0 +1,560 @@
+---
+title: "Stage 04: ASP Genotyping Pipeline"
+subtitle: "`r paste0('Dataset: ', params$dataset_name, ' - ', params$n_barcodes, ' barcodes')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: hide
+    df_print: kable
+    highlight: tango
+    theme:
+      version: 5
+      bg: "#FFFFFF"
+      fg: "#2E2A26"
+      primary: "#657359"
+      secondary: "#8B775F"
+      base_font: "Times New Roman"
+      heading_font: "Times New Roman"
+      headings-font-weight: 700
+      code_font:
+        google: "JetBrains Mono"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+params:
+  dataset_name: "big" # or "small"
+  n_barcodes: 24 # 6 or 24
+  n_cores: 3 #number of cores to use
+
+  #Input reads and primers settings
+  input_type: "unpadded" # "padded" or "unpadded"
+  use_anchors: true # anchor bases are pasted after the SNP of both primers, false for no anchors
+  anchor_length: 3 # 1 to 5 reference bases after the SNP used as anchor
+  probe_type: "asp_primers" # "asp_primers" or "reference" (reference needs padded amplicons)
+  
+  #Input for score_reads_against_primers_2pwalign_v8() function
+  primer_quality: 19 # Phred Q given to every fabricated primer the read is aligned against
+  gap_opening: 6 # cost of opening a gap (pairwiseAlignment default is 10)
+  gap_extension: 2 # cost of extension (default is 4)
+
+  # Threshold Inputs for score_reads_against_primers_2pwalign_v8() function
+  threshold_type: "errors" # "fraction" for my first naive version or "errors" for updated version with more uniform thresholds
+  min_score_fraction: 0.65 # alignment threshold, score must be larger than 0.65 * score of perfect primer alignment
+  error_rate: 0.08 # for "errors" setting only, it ends up at about 1 mismatch per 12.5 bases
+  min_errors: 1 # for "errors" settings only, sets the minimum amount of allowed errors, essentially assigns number of allowed indels
+
+  # Threshold for allowing reads to vote in score_reads_against_primers_2pwalign_v8() function
+  min_snp_quality: 10 # reads with SNP base under Q10 do not vote, 0 sets it to no cutoff
+  max_mismatches: 2 # maximum number of mismatches allowed per alignment, ensures clean reads and less noise, Inf switches it off
+
+  # Inputs for call_genotype() function
+  minimum_required_depth: 3 # minimum depth for genotyping
+  HT_min_frequence: 0.20 # MAF must be larger than this threshold for genotyper to call it HT
+
+  #Inputs for strand check filter or flag
+  strand_flag_prob: 0.01 # strand check, a direction needs at least 8 reads before it is flagged
+  expected_minor_fraction: 0.44 # derived from data (or 0.5)
+  strand_downgrade: false # false = strand check only flags it, true = HT is changed to HM
+  
+  # Paths
+  barcode_map_path: "Data/Supporting_data/Samples_ONT_barcodes.tsv" # file with dataset name, sample names and barcodes, manual input before running
+  primer_panel_path: "Data/Supporting_data/Primer_panels/12864_2021_7761_MOESM12_ESM_filtered.xlsx"
+  reference_path: "Data/Supporting_data/Genome_reference_data/snps_500bp_sequences.fa" # 1000 bp padded genome reference
+---
+
+
+```{r, knitr_options, include = FALSE}
+library(knitr)
+opts_chunk$set(comment = "", message = FALSE)
+```
+
+```{css, echo = FALSE}
+pre, pre code { white-space: pre-wrap; word-break: break-word; }
+.scroll-output { max-height: 250px; overflow-y: auto; }
+```
+
+
+This script contains pipeline for SNP genotyping with ASP1 and ASP2 primers, which were obtained from the primer panel in Harmoinen et al. research paper. The last nucleotide base of these primers is exactly matched with SNP position which means they always differ only at the last base. Genotyping script uses that property to correctly identify the allele based on the matching primer. All the reads are aligned with Biostrings pwalign package using PairwiseAlignment() with type = "local-global". Script now works on padded or unpadded amplicon, using naive (0.65) threshold for filtering pairwise alignment scores or updated threshold using errors. It either always accepts one indel (most common Nanopore error) or maximum two high quality mismatches based on error rate (0.08, approximately one mismatch per 12 bases). Can for maximum number of mismatches can also be edited (now max 2). Primers which are different lengths are now trimmed at the start (to fix alignment hopping and position disagreement) and option to add anchor at the end (now 3) to also help with primer alignment hopping in some rare cases. Primers for unpadded sequence are a lot shorter because the forward STA primers (cut when obimultiplexing) sometimes cut into the unpadded amplicon (maximum 9 bases, for proper alignment ASP primer has to be cut from the start). Pipeline now also contains multiple flags and checks for filtering called alleles.
+
+After completing this script, move on to 05_SNP_Bayesian_Genotyping.Rmd
+
+## Libraries, settings, paths and basic setup 
+
+```{r Setup}
+suppressMessages({
+  library(readxl)
+  library(Biostrings)
+  library(pwalign)
+  library(dplyr)
+  library(readr)
+  library(parallel)
+})
+
+invisible(list2env(params, envir = environment()))
+primer_quality <- as.integer(primer_quality) # the scorer needs an integer Phred Q
+anchor_length <- as.integer(anchor_length)
+
+#Paths
+output_folder_name_master <- file.path("Results", dataset_name, "Genotypes_results")
+dir.create(output_folder_name_master, showWarnings = FALSE, recursive = TRUE)
+
+# Settings used per different runs are saved inside its run specific folder for reproducibility.
+settings_used <- data.frame(setting = c("run_date", names(params)),
+                            value = c(format(Sys.time(), "%Y-%m-%d %H:%M"),
+                                      vapply(params, function(setting_value) paste(setting_value, collapse = ", "), character(1))))
+```
+
+<details><summary>Settings used for this run</summary>
+
+```{r settings_table, echo = FALSE}
+kable(settings_used, row.names = FALSE, col.names = c("Setting", "Value"))
+```
+
+</details>
+
+
+## Primer panel preparation 
+Contains helper function and primer panel setup, that is trimming the few starting bases for equal length, anchoring after the SNP (padded amplicons get full anchor, unpadded amplicon get max anchor based on the input in setup but its variable  based on where the LSP primer starts).
+
+Not all the ASP primers are the same length 19 primer pairs have 1 or 2 bases added at the 5' (start of the primer). In some rare cases this unequal length can lead to suspicious decision making in the allele calling. Longer primer can obviously score more points, and sometimes those one extra base can help it win over the second the primer even though it has a wrong SNP position base (one extra high quality base minus one low quality base at SNP position can win with really thin margins). Thats why this step of trimming the primers first base is crucial. This fix also makes all the flagged SNP mismatches disappear which is a problem I found earlier, fixed it, but I just didn't connect the dots as to what was the internal reason behind it.
+
+
+
+```{r Primer_Panel_Preparation, class.output = "scroll-output"}
+source("Code/R_scripts/asp_functions.R", local = TRUE) #loads shared functions from the asp_function.R script
+
+# Function for barcode mapping
+barcode_map <- read_tsv(barcode_map_path, show_col_types = FALSE) %>%
+  filter(dataset == dataset_name) %>%
+  mutate(barcode_num = sub("^[A-Za-z]+", "", barcode))
+
+# Vector of barcode numbering
+barcodes <- sprintf("%02d", 1:n_barcodes) 
+
+unpadded_cut_margin <- 4L 
+panel <- prepare_primer_panel(primer_panel_path, reference_path, input_type, use_anchors, anchor_length, unpadded_cut_margin, probe_type = probe_type)
+```
+
+
+## Scoring Function
+
+The function is called once per sample locus pair. It receives every read assigned to that locus (from the ObiTools-identified FASTQ, unpadded or padded version) and returns one allele call (or NA) per read and all other diagnostics. Now all the major steps are done over all the reads at a locus at once.
+
+```{r Scoring_Lookups}
+match_lookup <- build_match_lookup(primer_quality) # this is build once and then passed to the scoring function
+mismatch_cost_lookup <- vapply(0:93, function(q) mismatch_cost_f(q, primer_quality), numeric(1)) # calculates cost of one mismatch based on Q from 0 to 93
+```
+ 
+
+## Genotype calling function 
+This function takes all the allele calls for one sample and locus combination and calculates those into a single genotype. It checks for only two alleles and discards NA values. Why only two? The previous score_against_primers() function only produces three different outputs. Based on the best scoring of two alignments per read ASP1 and ASP2 (directional aware). It grabs the corresponding allele base from the Primer_panel. What happens to reads whose SNP base is a different base, that is primer alignment called one specific allele (based on a good score) but actual base is something else? Previous old naive (first function) completely ignored this problem. Now during the scoring_against_primers() function those cases are specifically flagged and pulled out of from the voting. So the call_genotype() doesn't have to check for any other base contamination. This secret alignment hopping is now also fixed by trimming the primers one or two bases at 5' making them the same length.
+
+UPDATES: It has a new strand balance check. A real HT has both alleles on both strands (fwd and rv), but different artifacts usually happen only on one (hopping, homopolymer slides itd). If one minor allele is completely missing from one strand it flags it based on strand_downgrade (if its TRUE it downgrades it automatically to HM, if FALSE it just flags it). A real HT has a second allele with probability expected_minor_fraction (0.44), so k reads in one direction all miss it with probability 0.56^k. Filter is used when that probability is below strand_flag_prob: 0.2 (k = 3 reads), 0.05 (k = 6 reads) , 0.01 (k = 8 reads). Directions with fewer reads can't fail, so low-depth HTs are not punished for missing data.
+
+This call_genotype() function has been moved to the asp_function.R script where it's shared between different stages
+
+
+## Full ASP Genotyping pipeline
+This master chunk runs the full genotype calling pipeline. It runs in three parts. It reads and tags every barcode .fastq metadata at once, then scores all the reads against locus specific ASP primers and finds the best matching primer. This step is spread over optional number of cores (i use 7 for the smaller set and 3 for the bigger). In part three the genotyping happens and writing console summaries and .tsv files (per sample, pooled reads and genotype tables, also a new flagged mismatched SNP reads and timing log for speed comparison).
+
+```{r ASP_Genotyping_Pipeline, class.output = "scroll-output", results = "hold"}
+# Folder names are built with a shared function inside asp_functions.R, it gives a unique name based on changed settings for every run. If you use the same settings to rerun it again it gets overwritten. 
+output_folder_name_identified <- file.path("Results", dataset_name, "Genotypes_results",
+  build_run_names(input_type, use_anchors, anchor_length, threshold_type, error_rate, min_score_fraction, probe_type = probe_type)$asp_run_name)
+dir.create(output_folder_name_identified, showWarnings = FALSE, recursive = TRUE)
+
+write.table(settings_used, file.path(output_folder_name_identified, "settings_used_04.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
+
+#Output path for a file thats written only if there are any mismatches between the SNP base and called allele, used at the start of the development to check for weird alignment patterns. Now with all the filters and flags in place this stays empty. Still useful to double check your work.
+flagged_snp_mismatch_path <- file.path(output_folder_name_identified, "flagged_snp_mismatch_reads.tsv") 
+
+# Log_time function works fine for Part 1 and Part 3, during the part 2 of the function it stops working because of forks in the processing.
+timing_log <- list()
+pipeline_start_time <- Sys.time() # marks the start for the last total pipeline timing entry
+
+### Part 1 of the scoring function. It reads every .fastq barcode file at the start without looping, parses it and tags it with sample_id
+part1_timer <- Sys.time() #starts timing Part 1
+raw_read_tables <- list() # empty list for raw reads, one slot per barcode
+
+# Builds path for barcode using a simple helper function
+for (bc in barcodes) { 
+  identified_path <- identified_file_names_f(bc)
+  if (!file.exists(identified_path)) {
+cat("missing fastq, skipped:", identified_path, "\n")
+    next
+  }
+
+  sample_id <- get_actual_sample_name(paste0("barcode", bc)) #gets actual sample_id using a simple helper function instead of "barcode01"
+  t_bc <- Sys.time() # timer for barcode loading
+
+  # Custom header parsing for each barcode, it saves all the important information provided by ObiTools4 obimultiplexing
+  fastq_lines <- readLines(identified_path)
+  headers <- fastq_lines[seq(1, length(fastq_lines), by = 4)]
+  seqs <- fastq_lines[seq(2, length(fastq_lines), by = 4)]
+  quals <- fastq_lines[seq(4, length(fastq_lines), by = 4)]
+  read_ids <- sub("^@", "", sub(" .*$", "", headers))
+  loci <- sub('.*"experiment":"([^"]*)".*', "\\1", headers)
+  direction <- sub('.*"obimultiplex_direction":"([^"]*)".*', "\\1", headers)
+  fwd_err <- as.integer(sub('.*"obimultiplex_forward_error":([0-9]+).*', "\\1", headers))
+  rev_err <- as.integer(sub('.*"obimultiplex_reverse_error":([0-9]+).*', "\\1", headers))
+  rank <- sub('.*"obimultiplex_amplicon_rank":"([^"]*)".*', "\\1", headers)
+
+  # Creates a dataframe for all the parsed header, one per barcode
+  raw_read_tables[[sample_id]] <- data.frame(
+    barcode = sample_id, 
+    read_id = read_ids, 
+    locus = loci, 
+    direction = direction,
+    forward_error = fwd_err, 
+    reverse_error = rev_err, 
+    amplicon_rank = rank,
+    seq = toupper(seqs),
+    qual = quals)
+
+  # Logs the time for barcode loading and parsing, same structure in all the scripts
+  log_time(sprintf("read barcode %s (%s)", bc, sample_id), t_bc)
+}
+
+# Combines all the data frames made in a loop into one large table
+all_reads_raw <- bind_rows(raw_read_tables)
+## End of barcode loop
+
+# Safety check in case of weird header data or parsing
+bad_direction <- !all_reads_raw$direction %in% c("forward", "reverse")
+unknown_locus <- !all_reads_raw$locus %in% panel$locus
+if (any(bad_direction)) warning(sum(bad_direction), " reads without a forward/reverse direction in the header")
+if (any(unknown_locus)) warning(sum(unknown_locus), " reads with a locus that is not in the panel (never scored)")
+
+#This line is the key difference for restructured version from earlier versions. It separates the full table into a named list of smaller data frames per locus (keyed by locus name). In the previous version it had to scan and filter the whole table every time all_reads_raw$locus == locus ran for each locus in the loop
+reads_by_locus <- split(all_reads_raw, all_reads_raw$locus) 
+
+log_time(sprintf("Part 1 total: read + tag %d barcodes (%d reads)", length(raw_read_tables), nrow(all_reads_raw)), part1_timer) 
+
+### Part 2. It loops over loci once instead of nested loop per barcode and per locus like in the older version which made them run for a couple of hours. It's now also parallelized, each locus is independent now, workload is separated into pre assigned number of cores. Before this change, they ran in a loop one after another
+
+part2_timer <- Sys.time()
+
+# Counts all the reads for every locus, runs once for cat() and for ordering workload and even distribution. Each worker get a big locus at the start, then its assigned randomly. It prevents accidentally assigning all the large loci to one worker which slows down the process.
+reads_per_locus_preview <- sapply(panel$locus, function(loc) sum(all_reads_raw$locus == loc))
+
+# Returns indices from the panel for primers with largest amount of reads 
+loci_order_preview <- order(reads_per_locus_preview, decreasing = TRUE) 
+
+# Banners showing basic info about loci, number of reads, cores etc, with a short loop for showing biggest loci
+cat(sprintf("\n[PART 2] Starting: %d loci, %d reads total, %d cores (mc.preschedule = FALSE)\n", nrow(panel), nrow(all_reads_raw), n_cores))
+cat("[PART 2] Largest loci (dispatched roughly in this order, workers self-balance the rest):\n")
+for (k in head(loci_order_preview, 5)) {
+  cat(sprintf("    %s (%d reads)\n", panel$locus[k], reads_per_locus_preview[k]))
+  }
+cat(sprintf("[PART 2] ... and %d more loci\n\n", nrow(panel) - min(5, nrow(panel))))
+
+# Each core runs this function, "i" are the row indices from loci_order_preview
+score_one_locus <- function(i) {
+  locus <- panel$locus[i] 
+  locus_reads <- reads_by_locus[[locus]] # This is faster lookup for reads created earlier instead of previous slower calling
+  if (is.null(locus_reads) || nrow(locus_reads) == 0) return(NULL)
+
+  locus_start_time <- Sys.time()
+
+  # Data preparation for the score_reads_against_primers_2pwalign_v8() function which run the main primer matching, 2 pairwiseAlignments calls and allele-calling per read
+  read_set <- DNAStringSet(locus_reads$seq)
+  read_quals <- locus_reads$qual
+  
+  match_result <- score_reads_against_primers_2pwalign_v8(
+    read_set, 
+    read_quals,
+    locus_reads$direction,
+    panel$asp1_seq[i], 
+    panel$asp2_seq[i],
+    panel$allele1[i], 
+    panel$allele2[i], 
+    min_score_fraction,
+    primer_quality = primer_quality,
+    match_lookup = match_lookup,
+    mismatch_cost_lookup = mismatch_cost_lookup,
+    gap_opening = gap_opening,
+    gap_extension = gap_extension,
+    anchor = panel$anchor[i],
+    require_position_agreement = TRUE,
+    input_type = input_type,
+    threshold_type = threshold_type,
+    error_rate = error_rate,
+    min_errors = min_errors,
+    min_snp_quality = min_snp_quality,
+    max_mismatches = max_mismatches,
+    probe_type = probe_type)
+
+  # Computes elapsed time, but is not yet shown to the console because of split workload between cores.
+  elapsed <- as.numeric(Sys.time() - locus_start_time, units = "secs") 
+  step_label <- sprintf("[locus %d/%d] %s (%d reads, %d samples)", i, nrow(panel), locus, nrow(locus_reads), length(unique(locus_reads$barcode)))
+
+
+  # Assembles the reads from every locus into a data frame, one row per read with all the information about each read
+  reads_df <- data.frame(
+    barcode = locus_reads$barcode,
+    read_id = locus_reads$read_id,
+    locus = locus,
+    direction = locus_reads$direction,
+    forward_error = locus_reads$forward_error,
+    reverse_error = locus_reads$reverse_error,
+    amplicon_rank = locus_reads$amplicon_rank,
+    asp1_score = match_result$score1,
+    asp2_score = match_result$score2,
+    perfect1 = match_result$perfect1,                                   
+    perfect2 = match_result$perfect2,                                  
+    winning_fraction = pmax(match_result$score1, match_result$score2) /  
+      ifelse(match_result$score1 >= match_result$score2,  
+             match_result$perfect1, match_result$perfect2),
+    winning_orientation = match_result$winning_orientation,
+    winning_nmismatch = match_result$winning_nmismatch,
+    winning_mismatch_quality = match_result$winning_mismatch_quality,
+    winning_mismatch_cost = match_result$winning_mismatch_cost,
+    winning_max_mismatch_quality = match_result$winning_max_mismatch_quality,
+    winning_high_quality_mismatches = match_result$winning_high_quality_mismatches,
+    winning_indel_events = match_result$winning_indel_events,
+    snp_position_quality = match_result$snp_position_quality,
+    snp_deleted = match_result$snp_deleted,
+    snp_read_position = match_result$snp_read_position,
+    snp_read_base = match_result$snp_read_base,
+    tie_flag = match_result$tie_flag,                        
+    below_threshold_flag = match_result$below_threshold_flag, 
+    snp_mismatch_flag = match_result$snp_mismatch_flag,
+    snp_indel_flag = match_result$snp_indel_flag,
+    snp_missing = match_result$snp_missing, 
+    snp_position_disagree = match_result$snp_position_disagree,
+    snp_low_quality = match_result$snp_low_quality,
+    too_many_mismatches = match_result$too_many_mismatches,
+    score_margin = match_result$score_margin,
+    relative_margin = match_result$relative_margin,
+    called_allele = match_result$called_allele,
+    called_allele_raw = match_result$called_allele_raw,
+    stringsAsFactors = FALSE)
+
+  # Mclapply lets you return only one value per task, data frame with reads and elapsed time are collected into one list
+  list(
+    reads = reads_df,
+    timing = data.frame(step = step_label, 
+                        seconds = elapsed))
+  } 
+## End of score_one_locus() function 
+
+# This is the forking process, each core or "worker" gets its one loci_order_preview indices and applies it to score_one_locus(). Locus_results is a list of 33 loci where each spot is a list with reads data and timing data
+locus_results <- mclapply(loci_order_preview, score_one_locus, mc.cores = n_cores, mc.preschedule = FALSE)
+
+# Workers that failed inside the score_one_locus() return error object instead, safety checks
+failed_loci <- vapply(locus_results, inherits, logical(1), "try-error")
+if (any(failed_loci)) stop("scoring failed for ", sum(failed_loci), " loci, first error: ", locus_results[[which(failed_loci)[1]]])
+
+# For workers that crashed because the process died or ran out of memory, goes to lost_loci
+lost_loci <- vapply(locus_results, is.null, logical(1)) & reads_per_locus_preview[loci_order_preview] > 0 
+if (any(lost_loci)) stop(sum(lost_loci), " loci returned no result (a worker crashed): ", paste(panel$locus[loci_order_preview][lost_loci], collapse = ", "))
+
+# Filters loci without reads (NULL)
+locus_results <- Filter(Negate(is.null), locus_results)
+# Walks across a filtered list of lists with reads and elapsed time data, grabs just the reads and combines all the reads and results into a table per locus.
+combined_all_reads_per_locus <- bind_rows(lapply(locus_results, "[[", "reads"))
+# Same for the elapsed time data
+locus_timing_rows <- bind_rows(lapply(locus_results, "[[", "timing"))
+
+# Timing data gets appended to the main process
+for (r in seq_len(nrow(locus_timing_rows))) {
+  timing_log[[length(timing_log) + 1]] <- locus_timing_rows[r, , drop = FALSE]
+}
+
+log_time(sprintf("Part 2 total: score %d loci (%d rows)", length(locus_results), nrow(combined_all_reads_per_locus)), part2_timer)
+
+# Quick summary for banners, number of called allele reads and NA reads
+n_called_reads <- sum(!is.na(combined_all_reads_per_locus$called_allele))
+n_na_reads <- sum(is.na(combined_all_reads_per_locus$called_allele))
+
+cat(sprintf("\n[PART 2] Done: %d reads scored across %d loci\n",
+            nrow(combined_all_reads_per_locus), length(locus_results)))
+cat(sprintf("[PART 2] Called an allele: %d (%.1f%%) | NA (failed threshold/SNP checks): %d (%.1f%%)\n",
+            n_called_reads, 100 * n_called_reads / nrow(combined_all_reads_per_locus),
+            n_na_reads, 100 * n_na_reads / nrow(combined_all_reads_per_locus)))
+cat(sprintf("[PART 2] Flagged (SNP base differs from winning primer): %d (%.1f%% of all reads)\n\n",
+            sum(combined_all_reads_per_locus$snp_mismatch_flag, na.rm = TRUE),
+            100 * sum(combined_all_reads_per_locus$snp_mismatch_flag, na.rm = TRUE) / nrow(combined_all_reads_per_locus)))
+cat("[PART 3] Starting genotype calling...\n\n")
+
+### Part 3, actual genotype calling
+
+part3_timer <- Sys.time()
+
+max_score_margin <- max(mismatch_cost_lookup) # largest margin one SNP base can give (a Q93 base)
+
+genotype_table <- combined_all_reads_per_locus %>%
+  group_by(barcode, locus) %>%
+  group_modify(function(reads_for_this_pair, group_info) { #runs the call_genotype() function once per locus sample pair
+    result <- call_genotype( # Inputs of the function
+      reads_for_this_pair$called_allele,
+      reads_for_this_pair$direction,
+      minimum_required_depth = minimum_required_depth,
+      HT_min_frequence = HT_min_frequence,
+      strand_flag_prob = strand_flag_prob,
+      expected_minor_fraction = expected_minor_fraction,
+      strand_downgrade = strand_downgrade)
+    
+    flagged_count <- sum(reads_for_this_pair$snp_mismatch_flag, na.rm = TRUE)
+    total_reads_here <- nrow(reads_for_this_pair) # all reads for a locus sample pair
+    voting_reads <- !is.na(reads_for_this_pair$called_allele) # the reads call_genotype() counted
+    n_called_votes <- sum(voting_reads, na.rm = TRUE) 
+    evidence_sum <- sum(reads_for_this_pair$score_margin[voting_reads], na.rm = TRUE) / max_score_margin
+    qd <- if (n_called_votes > 0) round(evidence_sum / n_called_votes, 4) else NA_real_ # QD index calculation
+
+    # Marks the reads removed because of the SNP position disagreement rule
+    removed <- !is.na(reads_for_this_pair$called_allele_raw) & 
+               (reads_for_this_pair$snp_missing | reads_for_this_pair$snp_position_disagree) &
+               !reads_for_this_pair$snp_mismatch_flag &
+               !reads_for_this_pair$snp_low_quality &
+               !reads_for_this_pair$too_many_mismatches
+    removed_alleles <- table(reads_for_this_pair$called_allele_raw[removed]) # Counts of those reads per raw allele
+
+    # Tibble which is returned after every call_genotype() call
+    tibble(
+      genotype = unname(result["genotype"]),
+      depth = as.integer(result["depth"]),
+      status = if (is.na(result["genotype"])) "low_depth" else "called",
+      strand_check = unname(result["strand_check"]),
+      minor_fwd = as.integer(result["minor_fwd"]),
+      minor_rev = as.integer(result["minor_rev"]),
+      position_disagree_removed = sum(removed, na.rm = TRUE),
+      position_disagree_by_allele = paste(names(removed_alleles), removed_alleles, sep = ":", collapse = " "),
+      flagged_snp_mismatch_reads = flagged_count,
+      flagged_snp_mismatch_fraction = if (total_reads_here > 0) round(flagged_count / total_reads_here, 4) else NA_real_,
+      QD = qd
+    )
+  }) %>%
+  ungroup()
+
+# Every expected sample also for those whose .fastq or reads were missing
+all_sample_locus_combos <- expand.grid(
+  barcode = unique(c(vapply(barcodes, function(bc) get_actual_sample_name(paste0("barcode", bc)), character(1)), all_reads_raw$barcode)),
+  locus = panel$locus)
+
+combined_genotypes <- all_sample_locus_combos %>%
+  left_join(genotype_table, by = c("barcode", "locus")) %>%
+  mutate(
+    status = ifelse(is.na(status), "no_coverage", status),
+    depth = ifelse(is.na(depth), 0L, depth))
+
+# which HT calls failed the strand check 
+failed_strand_pairs <- combined_genotypes %>% filter(strand_check %in% "failed")
+cat(sprintf("[PART 3] Strand check: %d heterozygous calls passed, %d failed (%s; a direction needs >= %d reads to be judged)\n",
+            sum(combined_genotypes$strand_check %in% "passed"), nrow(failed_strand_pairs),
+            if (strand_downgrade) "downgraded to homozygous" else "flagged only",
+            ceiling(log(strand_flag_prob) / log(1 - expected_minor_fraction))))
+
+
+log_time("Part 3 total: genotype calling", part3_timer)
+
+# Writes outputs, cats, summaries and .tsv, loop writes one for each barcode separately
+for (id in unique(combined_genotypes$barcode)) {
+  write_tsv(
+    combined_genotypes %>% filter(barcode == id),
+    file.path(output_folder_name_identified, paste0(id, "_asp_genotypes.tsv"))
+  )
+}
+
+# For combined results
+write_tsv(combined_genotypes, file.path(output_folder_name_identified, "all_barcodes_asp_genotypes.tsv"))
+write_tsv(combined_all_reads_per_locus, file.path(output_folder_name_identified, "all_barcodes_asp_reads.tsv"))
+
+flagged_snp_mismatch_reads <- combined_all_reads_per_locus[
+  !is.na(combined_all_reads_per_locus$snp_mismatch_flag) & combined_all_reads_per_locus$snp_mismatch_flag, ]
+
+# only saved when there are flagged reads and an old file from an earlier run is removed
+if (nrow(flagged_snp_mismatch_reads) > 0) {
+  write_tsv(flagged_snp_mismatch_reads, flagged_snp_mismatch_path)
+} else if (file.exists(flagged_snp_mismatch_path)) {
+  invisible(file.remove(flagged_snp_mismatch_path))
+} 
+
+log_time("TOTAL PIPELINE", pipeline_start_time)
+```
+
+
+
+## Genotyping Summary
+
+```{r Genotyping_Summary}
+cat(sprintf("Samples processed: %d | Mean depth per called genotype: %.1f\n",
+            length(unique(combined_genotypes$barcode)),
+            mean(combined_genotypes$depth[combined_genotypes$status == "called"])))
+
+# Number and % of no coverage, low depth reads
+status_counts <- combined_genotypes %>%
+  count(status) %>%
+  mutate(percent = round(100 * n / sum(n), 1)) %>%
+  mutate(status = recode(status, called = "Called", low_depth = "Below minimum depth", no_coverage = "No reads"))
+kable(status_counts, col.names = c("Status", "Sample-locus pairs", "Percent"))
+
+# HT which failed the strand check, only shows when there are any
+if (nrow(failed_strand_pairs) > 0) kable(select(failed_strand_pairs, barcode, locus, genotype, depth, minor_fwd, minor_rev))
+```
+
+
+## Read Filtering Summary
+Step 1: Did the scoring function pick a primer for the read, did a read pass the threshold?
+Step 2: Which reads that had a raw call survived the SNP checks and filters and which reads were removed
+
+```{r Read_Filtering_Summary}
+# Step 1
+primer_choice_outcome <- ifelse(combined_all_reads_per_locus$tie_flag, "Tie between ASP1 and ASP2",
+                         ifelse(combined_all_reads_per_locus$below_threshold_flag, "Below score threshold", "Primer chosen (raw call)"))
+primer_choice_table <- data.frame(table(outcome = primer_choice_outcome))
+primer_choice_table$percent <- round(100 * primer_choice_table$Freq / sum(primer_choice_table$Freq), 2)
+kable(primer_choice_table, col.names = c("Outcome", "Reads", "Percent"), format.args = list(big.mark = ","))
+
+# Step 2
+reads_with_raw_call <- combined_all_reads_per_locus[!is.na(combined_all_reads_per_locus$called_allele_raw), ]
+snp_check_names <- c("snp_missing", "snp_position_disagree", "snp_mismatch_flag", "snp_low_quality", "too_many_mismatches")
+snp_check_results <- as.matrix(reads_with_raw_call[, snp_check_names])
+failed_checks_per_read <- rowSums(snp_check_results)
+snp_check_labels <- c("SNP base missing in the read",
+                      "ASP1 and ASP2 place the SNP at different positions",
+                      "SNP base differs from the winning primer",
+                      sprintf("SNP base below Q%d", min_snp_quality),
+                      sprintf("More than %s mismatches", max_mismatches))
+kable(data.frame(flag = snp_check_labels,
+                 flagged = colSums(snp_check_results),
+                 percent_of_raw = round(100 * colSums(snp_check_results) / nrow(reads_with_raw_call), 2),
+                 only_this_flag = colSums(snp_check_results[failed_checks_per_read == 1, , drop = FALSE])),
+      row.names = FALSE, format.args = list(big.mark = ","),
+      col.names = c("Check", "Reads flagged", "% of raw calls", "Flagged by this check only"),
+      caption = sprintf("SNP checks on %s raw calls, %s called (%.1f%%)",
+                        format(nrow(reads_with_raw_call), big.mark = ","), format(sum(failed_checks_per_read == 0), big.mark = ","),
+                        100 * mean(failed_checks_per_read == 0)))
+
+# removed raw calls by flags
+kable(as.data.frame(table(failed_checks_per_read[failed_checks_per_read > 0])), col.names = c("Checks failed", "Raw calls removed"),
+      format.args = list(big.mark = ","))
+```
+
+
+```{r}
+readLines("Data/Processed_data/big/Demultiplexed_sequence_data/Identified_sample_sequences_Obi4/barcode01_identified.fastq", n = 1)
+```
+
+## Timing Summary
+
+```{r Timing_Summary}
+timing_summary <- bind_rows(timing_log)
+kable(timing_summary %>% filter(grepl("^Part|^TOTAL", step)), row.names = FALSE, col.names = c("Step", "Seconds"))
+# Every step per sample and barcode
+write_tsv(timing_summary, file.path(output_folder_name_identified, "timing_log_04.tsv"))
+```
+
+
+
+## Reproducibility
+
+<details><summary>Session info and tool versions</summary>
+
+```{r session_info}
+sessionInfo()
+```
+
+</details>
+

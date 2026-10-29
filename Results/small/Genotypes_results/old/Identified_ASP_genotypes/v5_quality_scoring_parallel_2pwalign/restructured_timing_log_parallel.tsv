@@ -1,0 +1,44 @@
+step	seconds
+read barcode 01 (W211211)	0.301
+read barcode 02 (W211213)	0.627
+read barcode 03 (W211252)	0.547
+read barcode 04 (W215223)	0.364
+read barcode 05 (W215223.r1)	0.444
+read barcode 06 (W215232)	0.459
+Phase 1 total: read + tag 6 barcodes (19621 reads)	2.992
+[locus 20/33] BICF2P223300 (1783 reads, 6 samples)	42.761
+[locus 7/33] BICF2S23219794 (1654 reads, 6 samples)	36.726
+[locus 1/33] BICF2P878735 (1079 reads, 6 samples)	29.822
+[locus 31/33] BICF2P57528 (937 reads, 6 samples)	24.47
+[locus 33/33] BICF2S23225775 (930 reads, 6 samples)	24.182
+[locus 32/33] BICF2P400484 (911 reads, 6 samples)	24.333
+[locus 8/33] TIGRP2P116705_rs8955982 (899 reads, 6 samples)	25.105
+[locus 9/33] BICF2G630703836 (888 reads, 6 samples)	22.562
+[locus 18/33] BICF2P1262794 (853 reads, 6 samples)	22.576
+[locus 14/33] BICF2S23626182 (820 reads, 6 samples)	22.126
+[locus 11/33] BICF2P153324 (755 reads, 6 samples)	21.053
+[locus 5/33] BICF2S22912279 (725 reads, 6 samples)	19.656
+[locus 21/33] BICF2P363248 (688 reads, 6 samples)	20.205
+[locus 3/33] BICF2S23758182 (627 reads, 6 samples)	19.117
+[locus 16/33] BICF2P1138616 (515 reads, 6 samples)	17.796
+[locus 30/33] BICF2P239653 (501 reads, 6 samples)	18.296
+[locus 10/33] BICF2G630580879 (485 reads, 5 samples)	16.078
+[locus 24/33] BICF2G630165989 (458 reads, 6 samples)	15.938
+[locus 2/33] BICF2S23033793 (432 reads, 6 samples)	15.41
+[locus 19/33] BICF2P1060759 (419 reads, 6 samples)	14.55
+[locus 4/33] BICF2G630320565 (412 reads, 6 samples)	13.73
+[locus 17/33] TIGRP2P247920_rs8757526 (365 reads, 6 samples)	13.116
+[locus 23/33] BICF2P1448058 (356 reads, 5 samples)	13.462
+[locus 13/33] BICF2S23526960 (350 reads, 5 samples)	13.168
+[locus 29/33] BICF2G630276750 (330 reads, 6 samples)	12.296
+[locus 6/33] BICF2P285168 (254 reads, 6 samples)	11.098
+[locus 22/33] BICF2P1165732 (250 reads, 5 samples)	10.185
+[locus 26/33] BICF2P866415 (202 reads, 6 samples)	7.629
+[locus 12/33] BICF2G630128194 (194 reads, 6 samples)	8.15
+[locus 15/33] BICF2S2305942 (187 reads, 6 samples)	8.808
+[locus 28/33] BICF2G630340139 (171 reads, 6 samples)	8
+[locus 27/33] BICF2G630409723 (115 reads, 5 samples)	6.894
+[locus 25/33] BICF2G630126293 (76 reads, 6 samples)	4.964
+Phase 2 total: score 33 loci (19621 rows)	85.074
+Phase 3 total: genotype calling	0.28
+TOTAL PIPELINE	88.512

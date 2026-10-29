@@ -1,0 +1,6 @@
+sample	locus	voting_reads	votes	realignment_agrees	mean_mismatches	reads_with_anchor_mismatch	called_genotype	reference_genotype
+W215207.r1	BICF2P223300	7	C:4/T:3	7	0.14	1	CT	CC
+W215208.r1	BICF2P223300	10	C:4/T:6	10	0.5	0	CT	CC
+W215214	BICF2P57528	13	C:10/T:3	13	0.23	1	CT	CC
+W215214.r1	BICF2S2305942	9	G:6/T:3	9	0.22	0	GT	GG
+W215220	BICF2P878735	3	A:1/G:2	3	0.67	0	AG	GG

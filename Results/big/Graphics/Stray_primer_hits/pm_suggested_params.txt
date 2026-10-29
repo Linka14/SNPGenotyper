@@ -1,0 +1,9 @@
+@param,primer_mismatches,4
+@param,primer_mismatches,GTCTCCCTGGAGGGCA,2
+@param,primer_mismatches,GGCAGCTGAAGCAGAACCA,2
+@param,primer_mismatches,TGGGCACTTCCAGGACA,3
+@param,primer_mismatches,CTCTTTGTTCCCAAGCCCC,3
+@param,primer_mismatches,ACTTCCCGACGGCGCT,3
+@param,primer_mismatches,TCTCCATCCTCTGCCCAC,3
+@param,primer_mismatches,ACCCACACATCCCTTCTCTGC,3
+@param,primer_mismatches,CCTGGCTGTGAAGCAGAACA,3

@@ -1,0 +1,21 @@
+Sequencing run report
+=====================
+
+  flow cell ID          FAX72901
+  flow cell type        FLO-MIN114 (R10.4.1)
+  device                MinION Mk1B, position MN00000
+  kit                   SQK-NBD114-24 (Native Barcoding Kit 24 V14)
+  translocation speed   400 bps, 5 kHz sampling
+  run ID                7bc4612476c0efecf6c2f708dfc3832cc31a72f6
+  experiment            GTseq_ONT_pilot
+  started               2026-02-20 09:14 UTC
+  basecalling           dorado, dna_r10.4.1_e8.2_400bps_sup@v5.0.0
+                        adapters and barcodes NOT trimmed
+
+Two libraries were prepared and sequenced with the same protocol:
+
+  small   6 samples, ~10,000 reads. Raw signal (POD5) kept, so basecalling
+          can be repeated. Use this one to develop.
+  big     24 samples, ~201,000 reads. Basecalled reads only.
+
+

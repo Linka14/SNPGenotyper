@@ -1,0 +1,80 @@
+barcode,error,count
+barcode01,Cannot associate sample to the tag pair (:aacaact),81
+barcode01,Cannot associate sample to the tag pair (aacaact:),67
+barcode01,No barcode identified,110
+barcode02,Cannot associate sample to the tag pair (:aacaact),66
+barcode02,Cannot associate sample to the tag pair (aacaact:),76
+barcode02,No barcode identified,129
+barcode03,Cannot associate sample to the tag pair (:),1
+barcode03,Cannot associate sample to the tag pair (:aacaact),153
+barcode03,Cannot associate sample to the tag pair (aacaact:),160
+barcode03,No barcode identified,202
+barcode04,Cannot associate sample to the tag pair (:aacaact),57
+barcode04,Cannot associate sample to the tag pair (aacaact:),50
+barcode04,No barcode identified,70
+barcode05,Cannot associate sample to the tag pair (:aacaact),102
+barcode05,Cannot associate sample to the tag pair (aacaact:),108
+barcode05,No barcode identified,128
+barcode06,Cannot associate sample to the tag pair (:aacaact),76
+barcode06,Cannot associate sample to the tag pair (aacaact:),106
+barcode06,No barcode identified,140
+barcode07,Cannot associate sample to the tag pair (:aacaact),63
+barcode07,Cannot associate sample to the tag pair (aacaact:),76
+barcode07,No barcode identified,86
+barcode08,Cannot associate sample to the tag pair (:),1
+barcode08,Cannot associate sample to the tag pair (:aacaact),90
+barcode08,Cannot associate sample to the tag pair (aacaact:),118
+barcode08,No barcode identified,127
+barcode09,Cannot associate sample to the tag pair (:),1
+barcode09,Cannot associate sample to the tag pair (:aacaact),124
+barcode09,Cannot associate sample to the tag pair (aacaact:),185
+barcode09,No barcode identified,203
+barcode10,Cannot associate sample to the tag pair (:),2
+barcode10,Cannot associate sample to the tag pair (:aacaact),74
+barcode10,Cannot associate sample to the tag pair (aacaact:),69
+barcode10,No barcode identified,97
+barcode11,Cannot associate sample to the tag pair (:aacaact),126
+barcode11,Cannot associate sample to the tag pair (aacaact:),144
+barcode11,No barcode identified,210
+barcode12,Cannot associate sample to the tag pair (:),1
+barcode12,Cannot associate sample to the tag pair (:aacaact),59
+barcode12,Cannot associate sample to the tag pair (aacaact:),64
+barcode12,No barcode identified,101
+barcode13,Cannot associate sample to the tag pair (:aacaact),73
+barcode13,Cannot associate sample to the tag pair (aacaact:),92
+barcode13,No barcode identified,105
+barcode14,Cannot associate sample to the tag pair (:aacaact),56
+barcode14,Cannot associate sample to the tag pair (aacaact:),70
+barcode14,No barcode identified,118
+barcode15,Cannot associate sample to the tag pair (:aacaact),67
+barcode15,Cannot associate sample to the tag pair (aacaact:),39
+barcode15,No barcode identified,95
+barcode16,Cannot associate sample to the tag pair (:),1
+barcode16,Cannot associate sample to the tag pair (:aacaact),60
+barcode16,Cannot associate sample to the tag pair (aacaact:),68
+barcode16,No barcode identified,78
+barcode17,Cannot associate sample to the tag pair (:aacaact),117
+barcode17,Cannot associate sample to the tag pair (aacaact:),150
+barcode17,No barcode identified,172
+barcode18,Cannot associate sample to the tag pair (:aacaact),49
+barcode18,Cannot associate sample to the tag pair (aacaact:),74
+barcode18,No barcode identified,76
+barcode19,Cannot associate sample to the tag pair (:aacaact),62
+barcode19,Cannot associate sample to the tag pair (aacaact:),96
+barcode19,No barcode identified,91
+barcode20,Cannot associate sample to the tag pair (:aacaact),47
+barcode20,Cannot associate sample to the tag pair (aacaact:),50
+barcode20,No barcode identified,83
+barcode21,Cannot associate sample to the tag pair (:aacaact),48
+barcode21,Cannot associate sample to the tag pair (aacaact:),64
+barcode21,No barcode identified,65
+barcode22,Cannot associate sample to the tag pair (:aacaact),92
+barcode22,Cannot associate sample to the tag pair (aacaact:),94
+barcode22,No barcode identified,162
+barcode23,Cannot associate sample to the tag pair (:aacaact),83
+barcode23,Cannot associate sample to the tag pair (aacaact:),89
+barcode23,No barcode identified,135
+barcode24,Cannot associate sample to the tag pair (:),1
+barcode24,Cannot associate sample to the tag pair (:aacaact),37
+barcode24,Cannot associate sample to the tag pair (aacaact:),42
+barcode24,No barcode identified,67

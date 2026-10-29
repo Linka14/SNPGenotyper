@@ -1,0 +1,43 @@
+sample	locus	read_id	direction	called_allele	realigned_primer	realigned_allele	orientation	score	perfect_match	n_mismatches	mismatch_contexts	snp_context	anchor_read	anchor_reference	n_anchor_mismatches
+W215207.r1	BICF2P223300	d06a1794-a325-4dfa-a3b0-20c6d7928394_sub[217..238]	forward	T	ASP2	T	forward	21.85	FALSE	1	C(24) | G(9) | C(6)	G(31) | A(34) | C(23)	C	C	0
+W215207.r1	BICF2P223300	1a3bff9a-7395-4d31-a576-e9a62286b5d1_sub[117..138]	reverse	T	ASP2	T	forward	29.73	TRUE	0		G(14) | A(42) | C(29)	C	C	0
+W215207.r1	BICF2P223300	90787253-5245-44bb-9f89-6ade5d7f0148_sub[229..251]	reverse	C	ASP1	C	forward	29.73	TRUE	0		G(21) | G(27) | G(10)	G	C	1
+W215207.r1	BICF2P223300	ffd0da33-d869-42e4-bfa3-aead005be35f_sub[356..376]	forward	C	ASP1	C	forward	29.73	TRUE	0		G(9) | G(36) | C(30)	C	C	0
+W215207.r1	BICF2P223300	6f6d8597-61bc-4f2a-a26e-57735e6be1e3_sub[211..232]	forward	T	ASP2	T	forward	29.73	TRUE	0		G(30) | A(31) | C(33)	C	C	0
+W215207.r1	BICF2P223300	66246d20-c1bd-4b90-88ae-13337783af44_sub[219..240]	forward	C	ASP1	C	forward	29.73	TRUE	0		G(20) | G(24) | C(41)	C	C	0
+W215207.r1	BICF2P223300	88151ee7-7f91-4099-98f3-9d92f48565c4_sub[673..694]	forward	C	ASP1	C	forward	29.73	TRUE	0		G(19) | G(38) | C(34)	C	C	0
+W215208.r1	BICF2P223300	32a98520-a8d1-4f0a-a08a-a16d06d65ac2_sub[1221..1242]	reverse	C	ASP1	C	forward	29.73	TRUE	0		G(16) | G(19) | C(15)	C	C	0
+W215208.r1	BICF2P223300	688c173f-bc67-4fb9-9aa5-b6865c6f9c77_sub[676..697]	reverse	C	ASP1	C	forward	29.73	TRUE	0		G(32) | G(32) | C(42)	C	C	0
+W215208.r1	BICF2P223300	6ac09bdb-f3ce-424a-bf6e-9707c07cd570_sub[355..376]	reverse	T	ASP2	T	forward	21.85	FALSE	1	C(8) | C(7) | T(10)	G(37) | A(13) | C(39)	C	C	0
+W215208.r1	BICF2P223300	9ae33304-0b97-42db-ac41-080d60e9519c_sub[697..718]	forward	T	ASP2	T	forward	21.85	FALSE	1	T(11) | C(7) | G(7)	G(90) | A(32) | C(39)	C	C	0
+W215208.r1	BICF2P223300	147ad4b9-2016-44fc-bd69-3b19ba769562_sub[342..363]	reverse	T	ASP2	T	forward	29.73	TRUE	0		G(31) | A(41) | C(17)	C	C	0
+W215208.r1	BICF2P223300	f7bfef23-8130-42fe-bc2b-101adeb5d409_sub[233..255]	reverse	C	ASP1	C	forward	29.73	TRUE	0		G(21) | G(13) | C(9)	C	C	0
+W215208.r1	BICF2P223300	7d708353-e321-4e55-8b87-49151b14830d_sub[103..124]	forward	T	ASP2	T	forward	29.73	TRUE	0		G(51) | A(43) | C(26)	C	C	0
+W215208.r1	BICF2P223300	47fc9cf7-ada2-4e0e-9dd7-d175f0237f42_sub[118..139]	reverse	T	ASP2	T	forward	21.85	FALSE	1	C(8) | T(14) | T(28)	G(44) | A(43) | C(45)	C	C	0
+W215208.r1	BICF2P223300	d98dcacb-d216-4b60-bdb8-58593ad5b313_sub[103..126]	forward	T	ASP2	T	forward	21.85	FALSE	1	A(16) | T(33) | C(11)	G(48) | A(43) | C(16)	C	C	0
+W215208.r1	BICF2P223300	2cd5a8ab-eb39-45d3-9a7a-81c9f40814a3_sub[117..136]	reverse	C	ASP1	C	forward	21.85	FALSE	1	A(5) | A(7) | A(10)	G(31) | G(14) | C(31)	C	C	0
+W215214	BICF2P57528	8835bacf-3a0f-4fe9-b021-b5d65c03fd0a_sub[483..522]	forward	T	ASP2	T	forward	27.74	TRUE	0		C(28) | A(41) | T(41)	TTA	TTA	0
+W215214	BICF2P57528	7d0bae8e-6e65-44f1-87dc-46bd59ac28c2_sub[474..512]	forward	T	ASP2	T	forward	27.74	TRUE	0		C(14) | A(42) | T(29)	TAA	TTA	1
+W215214	BICF2P57528	bd7b5ae6-021c-4e27-a273-a85b9835602f_sub[450..488]	forward	C	ASP1	C	forward	11.98	FALSE	2	G(10) | G(20) | C(32)  ||  G(20) | C(32) | G(8)	C(36) | G(38) | T(90)	TTA	TTA	0
+W215214	BICF2P57528	c6a3de61-6748-44a3-ad23-f23a88e5d944_sub[216..256]	reverse	C	ASP1	C	forward	27.74	TRUE	0		C(40) | G(26) | T(39)	TTA	TTA	0
+W215214	BICF2P57528	71653fec-80b6-4301-afbd-8a75f73b309d_sub[104..143]	forward	C	ASP1	C	forward	27.74	TRUE	0		C(32) | G(41) | T(39)	TTA	TTA	0
+W215214	BICF2P57528	18cc421b-3cd7-41f2-a9f1-918a38137452_sub[105..144]	forward	C	ASP1	C	forward	27.74	TRUE	0		C(36) | G(41) | T(49)	TTA	TTA	0
+W215214	BICF2P57528	71815b58-83f1-4c6d-8c8b-8049cc3cdc3b_sub[216..254]	forward	C	ASP1	C	forward	27.74	TRUE	0		C(42) | G(35) | T(13)	TTA	TTA	0
+W215214	BICF2P57528	170fc93c-75a9-42ea-bf04-b94ad290b7af_sub[222..259]	forward	C	ASP1	C	forward	27.74	TRUE	0		C(50) | G(42) | T(25)	TTA	TTA	0
+W215214	BICF2P57528	59731cbc-57a5-4262-a7c2-88a012b5de04_sub[218..256]	forward	C	ASP1	C	forward	27.74	TRUE	0		C(44) | G(36) | T(46)	TTA	TTA	0
+W215214	BICF2P57528	c3ed5446-188f-4e5f-b1d3-a9a0740a9c33_sub[217..256]	forward	C	ASP1	C	forward	27.74	TRUE	0		C(41) | G(36) | T(34)	TTA	TTA	0
+W215214	BICF2P57528	7cd0ae1a-2c64-4fd0-9a89-85bd085782f8_sub[728..770]	reverse	C	ASP1	C	forward	13.74	FALSE	1	A(15) | A(15) | C(7)	C(7) | G(18) | T(5)	TTA	TTA	0
+W215214	BICF2P57528	a17883d5-ec46-459c-9b78-f1e3df59c3bf_sub[341..379]	forward	C	ASP1	C	forward	27.74	TRUE	0		C(31) | G(20) | T(34)	TTA	TTA	0
+W215214	BICF2P57528	f4a66a67-5f0a-41a7-aee7-bedcf23391a8_sub[354..393]	forward	T	ASP2	T	forward	27.74	TRUE	0		C(33) | A(40) | T(26)	TTA	TTA	0
+W215220	BICF2P878735	fe6f8079-a88b-4540-8824-f6cbb5b87092_sub[431..471]	reverse	G	ASP2	G	forward	33.69	TRUE	0		A(11) | C(32) | G(40)	GCT	GCT	0
+W215220	BICF2P878735	37ec97aa-8804-428d-a868-2fc39a9da61f_sub[578..615]	reverse	A	ASP1	A	forward	25.81	FALSE	1	A(11) | A(4) | A(32)	A(29) | T(35) | G(33)	GCT	GCT	0
+W215220	BICF2P878735	f154b95d-ce19-4bb8-bba0-d534ad5bb7d0_sub[334..373]	forward	G	ASP2	G	forward	25.81	FALSE	1	A(6) | G(6) | G(10)	A(30) | C(30) | G(24)	GCT	GCT	0
+W215214.r1	BICF2S2305942	821897c9-55a9-4de3-b149-2f027e3f0676_sub[331..351]	reverse	G	ASP2	G	forward	27.74	TRUE	0		T(44) | G(15) | C(46)	C	C	0
+W215214.r1	BICF2S2305942	34bcab4a-fd82-450d-a0eb-af41123abe29_sub[703..723]	forward	G	ASP2	G	forward	27.74	TRUE	0		T(38) | G(37) | C(38)	C	C	0
+W215214.r1	BICF2S2305942	c4555c66-1815-4e84-a48a-2375514708d8_sub[337..357]	reverse	G	ASP2	G	forward	27.74	TRUE	0		T(42) | G(59) | C(40)	C	C	0
+W215214.r1	BICF2S2305942	eca50257-5910-4ebf-8724-a302a2cc911c_sub[567..586]	reverse	T	ASP1	T	forward	11.98	FALSE	2	G(21) | G(20) | C(10)  ||  G(20) | C(10) | T(14)	T(23) | T(37) | C(32)	C	C	0
+W215214.r1	BICF2S2305942	31054bfa-709f-45c2-af19-5243c8b86865_sub[1375..1395]	forward	G	ASP2	G	forward	27.74	TRUE	0		T(30) | G(31) | C(34)	C	C	0
+W215214.r1	BICF2S2305942	867da85e-92de-4d83-a022-94e6a5a7fc1f_sub[112..132]	forward	T	ASP1	T	forward	27.74	TRUE	0		T(24) | T(33) | C(18)	C	C	0
+W215214.r1	BICF2S2305942	c61053cb-348a-4455-b2f5-4c0b8de690f6_sub[343..363]	reverse	G	ASP2	G	forward	27.74	TRUE	0		T(44) | G(37) | C(30)	C	C	0
+W215214.r1	BICF2S2305942	caaf7a2a-9f76-4e46-b71f-ef89be383f4f_sub[574..594]	reverse	T	ASP1	T	forward	27.74	TRUE	0		T(38) | T(27) | C(90)	C	C	0
+W215214.r1	BICF2S2305942	4a5f3430-9c50-4cd4-beb9-16d248c803b0_sub[948..968]	forward	G	ASP2	G	forward	27.74	TRUE	0		T(8) | G(35) | C(38)	C	C	0

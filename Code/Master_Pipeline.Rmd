@@ -1,0 +1,286 @@
+---
+title: "Master pipeline"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    code_folding: show
+    df_print: kable
+    highlight: tango
+    theme:
+      version: 5
+      bg: "#FFFFFF"
+      fg: "#2E2A26"
+      primary: "#657359"
+      secondary: "#8B775F"
+      base_font: "Times New Roman"
+      heading_font: "Times New Roman"
+      headings-font-weight: 700
+      code_font:
+        google: "JetBrains Mono"
+---
+
+```{r knitr_options, include = FALSE}
+library(knitr)
+opts_chunk$set(comment = "")
+```
+
+```{r, Libraries}
+suppressMessages({
+  library(dplyr)
+  library(rstudioapi)
+})
+```
+
+
+```{r, Background Launcher, eval = FALSE}
+# START HERE: run this chunk every time you are ready to run full pipeline or just specific parts. This chunk is like a launcher for the master pipeline. It saves this file and knits it as a background job, so every stage below runs one after another in the background. Each part of the master pipeline is set in stages (my different starting .Rmd files, which are now all connected to this .Rmd), so before running check which stages you want to run with TRUE or FALSE. Previous .rmd specific editable variable are now shared if possible, so every stage uses the same parameters, if there are specific settings for each stages, check those manually in the chunks below.
+# All paths are written from the project folder (Full_workflow).
+
+#Paths
+master_rmd_path <- getSourceEditorContext()$path #grabs the path of the current tab in source editor, when you click run it finds this path
+project_folder <- if (is.null(getActiveProject())) dirname(master_rmd_path) else getActiveProject() # Full_workflow, found automatically from R project
+documentSave(getSourceEditorContext()$id) #writes and saves tab before rendering, id is the internal id of the tab. background job reads it from a disk
+dir.create(file.path(project_folder, "Code/HTMLs"), showWarnings = FALSE) #folder for htmls
+master_job_script <- tempfile(fileext = ".R") #gives the name for a temporary file in R temporary folder
+
+#writing HTMLs  
+writeLines(sprintf('rmarkdown::render("%s", output_dir = "%s", knit_root_dir = "%s", envir = new.env(), quiet = FALSE)',
+  master_rmd_path, file.path(project_folder, "Code/HTMLs"), project_folder), master_job_script) #renders the htmls inside the html folder for every stage
+
+#Launching
+jobRunScript(master_job_script, workingDir = project_folder, importEnv = FALSE) #background job starts inside the Full_workflow so all paths are correct, rendering start completely clean with no current session objects, runs the temporary file created before. its skips the launcher chunk (eval=F) and each runs_stage() starts processing a stage
+```
+
+
+```{r, Library dependencies}
+# packages the stages need, checked before any stage starts so a missing one fails immediately
+required_packages <- c("ggplot2", "patchwork", "dplyr", "tidyverse","readr", "jsonlite", "scales", "readxl", "Biostrings", "pwalign", "parallel", "rstan", "lme4", "grid")
+missing_packages <- required_packages[!vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing_packages) > 0) stop("Install these packages first: ", paste(missing_packages, collapse = ", "))
+```
+
+
+```{r setup}
+# Here you can choose which stages to run: TRUE = run, FALSE = skip (if you dont want to run obimultiplexing again for example)
+run_01_demultiplexing <- FALSE
+run_02_obitools_summaries <- FALSE
+run_03_minimap2 <- FALSE
+run_04_genotyping <- FALSE
+run_05_bayesian <-TRUE
+run_06_visualization <- FALSE
+run_07_failed_genotypes <- FALSE
+
+# Knits one stage Rmd with its settings in a fresh R process (Rscript), prints the progress in the Background Jobs pane, stops the pipeline if the stage fails, and returns how long it took.
+run_stage <- function(stage_rmd, stage_settings = list(), run) { #takes which rmd to run, its settings and whether to run it or not
+  if (!run) {
+    message("SKIPPED: ", stage_rmd) #skips all FALSE stages
+    return(NULL)
+  }
+  stage_settings_file <- tempfile(fileext = ".rds") #creates a temporary .rds file with stage settings (you have to pass it as text)
+  saveRDS(stage_settings, stage_settings_file)
+  
+  stage_start <- Sys.time() #timings and banners
+  message("STARTED: ", stage_rmd, " at ", format(stage_start, "%H:%M"))
+  
+  #runs a specific Rscript render_stage.R and tells which .Rmd with which settings to run. the Rscript keeps only the settings the YAML header for each stage needs and knits it to HTML (exits with failed (1) or success (0)).
+  stage_exit_status <- system2(file.path(R.home("bin"), "Rscript"), 
+    c("Code/R_scripts/render_stage.R", shQuote(stage_rmd), shQuote(stage_settings_file)),
+    stdout = "", stderr = "") #sends output to the pane
+  
+  if (stage_exit_status != 0) stop("Stage failed: ", stage_rmd, " (see the output above)") #if exit status is not 0 it stops every later stage
+  stage_minutes <- round(as.numeric(Sys.time() - stage_start, units = "mins"), 1)
+  message("FINISHED: ", stage_rmd, " in ", stage_minutes, " min")
+  data.frame(stage = basename(stage_rmd), minutes = stage_minutes)
+}
+```
+
+## Shared settings
+
+Used by several stages, set once here. Each stage only takes the ones it needs.
+
+```{r, Shared Settings} 
+#list of shared settings, each stage has two lists glued, this shared on and its own settings. Combined settings list is saved into .rds by the run_stage() which then the render_stage.R uses. All the unused settings by YAML header are dropped, kept settings are sent to render as params and overwrite those in the YAML header. Then inside each stage .Rmd list2env() unpacks that params list.
+
+shared_settings <- list(
+  # Dataset
+  dataset_name = "big", # small or big, this also affects output directories
+  n_barcodes = 24, # 6 for the small dataset, 24 for the big dataset
+
+  # Tools: paths to the installed bin directories on this computer
+  dorado_bin_folder = "",
+  obitools_bin_folder = "",
+  minimap2_bin_folder = "",
+  samtools_bin_folder = "",
+
+  # Shared input files, paths from the project folder (should be added manually for different projects)
+  barcode_map_path = "Data/Supporting_data/Samples_ONT_barcodes.tsv",
+  primer_panel_path = "Data/Supporting_data/Primer_panels/12864_2021_7761_MOESM12_ESM_filtered.xlsx",
+  reference_path = "Data/Supporting_data/Genome_reference_data/snps_500bp_sequences.fa", # 1000 bp widened SNP reference genome
+
+  # Genotype calling, the same thresholds for Minimap2 and ASP genotyping
+  minimum_required_depth = 3, # minimum reads per sample x SNP to call a genotype
+  HT_min_frequence = 0.20, # minor allele fraction needed for HT
+  min_snp_quality = 10, # reads whose SNP base is below this Phred quality do not vote (ASP) / are not counted (Minimap2 mpileup -Q), 0 switches it off
+  
+  # ASP run settings, shared by ASP genotyping and Bayesian genotyping (they make up the ASP results folder name)
+  n_cores = 4, # cores for ASP scoring, Stan chains and downsampling
+  input_type = "unpadded", # "padded" or "unpadded"
+  use_anchors = TRUE, # FALSE for no anchors (I get better results with anchors, minimizes alignment hopping)
+  anchor_length = 3, # 1 to 5 reference bases after the SNP
+  probe_type = "asp_primers", # "asp_primers" or "reference" (reference needs input_type = "padded")
+  threshold_type = "errors", # naive "fraction" or updated "errors" with more settings
+  min_score_fraction = 0.65, # for "fraction" only, sets a threshold which is 0.65 * (perfect score of a primer alignment)
+  error_rate = 0.08, # for "errors" only, ~1 mismatch per 12.5 bases
+
+  # Strand check, shared by ASP genotyping and Bayesian genotyping
+  strand_flag_prob = 0.01, # strand check, a minor allele direction needs at least 8 reads on before it is flagged (strand bias flag)
+  expected_minor_fraction = 0.44, # derived from first results
+  strand_downgrade = FALSE # TRUE = flagged HT becomes HM, better to just flag first and then manually filter those if needed
+)
+```
+
+## Stage 1: Dorado demultiplexing and obimultiplex
+
+```{r, Settings_01}
+# builds a second list of stage specific settings, they get merged and saved to.rds per stage.
+settings_01_demultiplexing <- list(
+  # Dorado demux
+  run_dorado = TRUE, # FALSE skips dorado when its demultiplexed files already exist
+  kit_name = "SQK-NBD114-24", # Nanopore barcoding kit
+
+  # MANUAL FILE PREPARATION: NGSfilter file for obimultiplex, path from the project folder
+  ngsfilter_path = "Data/Supporting_data/NGSfilter_file/ngsfilter.csv"
+)
+```
+
+```{r, Stage_01}
+timing_stage_01 <- run_stage("Code/Rmd_Stages/01_Dorado_Demultiplexing_and_Obi4_visualization.Rmd",
+  c(shared_settings, settings_01_demultiplexing), run = run_01_demultiplexing)
+```
+
+## Stage 2: ObiTools4 summaries and plots
+
+Stage 2 has no settings of its own, it only uses the shared settings.
+
+```{r, Stage_02}
+timing_stage_02 <- run_stage("Code/Rmd_Stages/02_ObiTools4_Basic_Visualisation.Rmd",
+  shared_settings, run = run_02_obitools_summaries)
+```
+
+## Stage 3: Minimap2 genotyping
+
+```{r, Settings_03}
+settings_03_minimap2 <- list(
+  pad = 50, # bp of extra context restored on each side
+  snp_position = 500, # fixed SNP position within every 1000bp reference
+  minimum_mapping_quality_threshold = 20 # minimum mapping quality for a read to count toward a genotype call
+)
+```
+
+```{r, Stage_03}
+timing_stage_03 <- run_stage("Code/Rmd_Stages/03_SNP_Genotyping_Minimap2.Rmd",
+  c(shared_settings, settings_03_minimap2), run = run_03_minimap2)
+```
+
+
+## Stage 4: ASP genotyping
+
+```{r, Settings_04}
+settings_04_genotyping <- list(
+  # Alignment
+  primer_quality = 19, # Phred quality of every primer base
+  gap_opening = 6, # gap opening cost
+  gap_extension = 2, # gap extension cost
+
+  # Threshold
+  min_errors = 1, # "errors" only, minimum errors allowed per primer
+
+  # Read voting filters
+  max_mismatches = 2 # Inf switches it off
+)
+```
+
+```{r, Stage_04}
+timing_stage_04 <- run_stage("Code/Rmd_Stages/04_SNP_Genotyping_ASP_primer.Rmd",
+  c(shared_settings, settings_04_genotyping), run = run_04_genotyping)
+```
+
+
+## Stage 5: Bayesian genotyping
+
+```{r, Settings_05}
+settings_05_bayesian <- list(
+  # What to run
+  run_stan = TRUE, # runs Bayes model
+  run_downsampling = TRUE, # runs downsampling and calibration statistics (needs run_stan = TRUE in the same run)
+  run_downsampling_plots = TRUE, # runs visualisations (from this run, or from the saved run with the same settings)
+  
+  # Genotype prior
+  prior_type = "ancestry", # "flat" = 1/3 each genotype, "het_share" = one heterozygote share for every pair, "hwe" = locus specific HWE priors from the panel frequencies or ancestry  
+  prior_het_share = 0.15, # only used when prior_type == "het_share"
+  prior_population = "FreqWOLF_all", # only used when prior_type is set to "hwe": FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT, FreqWOLF_IB, FreqDOG
+  prior_floor = 0.001, # floors allele frequency so no genotype gets an exact-zero prior
+  ancestry_prior_shape = 1, # 1 is uniform Beta(1, 1) prior, doesnt assume anything
+  phi_hom_structure = "shared", #"shared", "locus", "sample", "locus_sample"
+  
+  # Stan sampling
+  stan_iter = 4000,
+  stan_warmup = 1500,
+  stan_chains = 4,
+  stan_adapt_delta = 0.95,
+  max_error = 0.10, # cap on any error rate
+
+  # Downsampling and genotype confidence calibration
+  read_depths_to_test = c(3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 75),
+  draws_per_depth = 300,
+  minimum_reads_for_truth_pair = 75,
+  bootstrap_rounds = 1000
+)
+```
+
+```{r, Stage_05}
+timing_stage_05 <- run_stage("Code/Rmd_Stages/05_SNP_Bayesian_Genotyping.Rmd",
+  c(shared_settings, settings_05_bayesian), run = run_05_bayesian)
+```
+
+## Stage 6: Visualization and data analysis
+
+```{r, Settings_06}
+settings_06_visualization <- list(
+  run_basic_plots = TRUE,
+  run_filtration_parameters = TRUE,
+  run_speedopt_diagnosis = TRUE,
+  run_filtration_vis = TRUE
+)
+```
+
+```{r, Stage_06}
+timing_stage_06 <- run_stage("Code/Rmd_Stages/06_Visualisation_of_Genotyping_Results.Rmd",
+  c(shared_settings, settings_01_demultiplexing, settings_04_genotyping, settings_05_bayesian, settings_06_visualization),
+  run = run_06_visualization)
+```
+
+## Stage 7: Failed Genotypes Analysis
+
+```{r, Settings_07}
+settings_07_failed_genotypes <- list(
+  failed_genotypes_source = "asp_genotypes", # "bayes_genotypes" or "asp_genotypes", which genotype calls are compared with the reference
+  failed_max_reads_plotted = 20 # reads drawn per plot, the .tsv table keeps every read
+)
+```
+
+```{r, Stage_07}
+timing_stage_07 <- run_stage("Code/Rmd_Stages/07_Failed_genotypes_analysis.Rmd",
+  c(shared_settings, settings_05_bayesian, settings_07_failed_genotypes), run = run_07_failed_genotypes)
+```
+
+## Summary
+
+```{r, Summary}
+# collects timing summaries
+stage_timings <- bind_rows(timing_stage_01, timing_stage_02, timing_stage_03, timing_stage_04, timing_stage_05, timing_stage_06, timing_stage_07)
+kable(stage_timings, caption = sprintf("Total: %.1f min", sum(stage_timings$minutes))) #prepares it for better looking output in HTML
+```

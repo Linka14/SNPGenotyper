@@ -1,0 +1,62 @@
+step	seconds
+read barcode 01 (W211213)	3.048
+read barcode 02 (W211224)	3.702
+read barcode 03 (W211233)	6.455
+read barcode 04 (W211255)	2.455
+read barcode 05 (W211287)	3.668
+read barcode 06 (W211293)	4.005
+read barcode 07 (W215154)	2.659
+read barcode 08 (W215207.r1)	4.242
+read barcode 09 (W215208.r1)	5.778
+read barcode 10 (W215210.r1)	3.097
+read barcode 11 (W215214)	5.753
+read barcode 12 (W215214.r1)	3.143
+read barcode 13 (W215217)	3.136
+read barcode 14 (W215220)	3.322
+read barcode 15 (W215220.r1)	3.29
+read barcode 16 (W215222)	2.583
+read barcode 17 (W215222.r1)	5.438
+read barcode 18 (W215231)	2.253
+read barcode 19 (W215232)	3.215
+read barcode 20 (W215273)	2.294
+read barcode 21 (W215294)	2.166
+read barcode 22 (W215511)	3.644
+read barcode 23 (W215538)	3.319
+read barcode 24 (W215539.r1)	1.885
+Part 1 total: read + tag 24 barcodes (621058 reads)	86.975
+[locus 14/33] BICF2S23626182 (49931 reads, 24 samples)	22.28
+[locus 22/33] BICF2P1165732 (42491 reads, 24 samples)	20.917
+[locus 24/33] BICF2G630165989 (38674 reads, 24 samples)	21.586
+[locus 27/33] BICF2G630409723 (37220 reads, 24 samples)	21.726
+[locus 13/33] BICF2S23526960 (34390 reads, 24 samples)	21.664
+[locus 17/33] TIGRP2P247920_rs8757526 (31747 reads, 24 samples)	17.713
+[locus 9/33] BICF2G630703836 (29912 reads, 24 samples)	18.159
+[locus 3/33] BICF2S23758182 (28054 reads, 24 samples)	16.259
+[locus 15/33] BICF2S2305942 (25848 reads, 24 samples)	15.592
+[locus 23/33] BICF2P1448058 (25218 reads, 24 samples)	16.267
+[locus 4/33] BICF2G630320565 (24688 reads, 24 samples)	10.661
+[locus 18/33] BICF2P1262794 (21269 reads, 24 samples)	9.765
+[locus 8/33] TIGRP2P116705_rs8955982 (19521 reads, 24 samples)	9.824
+[locus 12/33] BICF2G630128194 (18173 reads, 24 samples)	10.269
+[locus 31/33] BICF2P57528 (17126 reads, 24 samples)	9.21
+[locus 25/33] BICF2G630126293 (15087 reads, 24 samples)	11.65
+[locus 2/33] BICF2S23033793 (14116 reads, 24 samples)	11.253
+[locus 19/33] BICF2P1060759 (13407 reads, 24 samples)	10.863
+[locus 20/33] BICF2P223300 (13132 reads, 24 samples)	9.927
+[locus 26/33] BICF2P866415 (11773 reads, 24 samples)	10.383
+[locus 16/33] BICF2P1138616 (10688 reads, 24 samples)	13.101
+[locus 21/33] BICF2P363248 (10474 reads, 24 samples)	11.838
+[locus 33/33] BICF2S23225775 (9382 reads, 24 samples)	12.218
+[locus 10/33] BICF2G630580879 (9321 reads, 24 samples)	12.64
+[locus 29/33] BICF2G630276750 (8902 reads, 24 samples)	12.147
+[locus 7/33] BICF2S23219794 (8509 reads, 24 samples)	9.686
+[locus 32/33] BICF2P400484 (8278 reads, 24 samples)	9.177
+[locus 6/33] BICF2P285168 (7999 reads, 22 samples)	9.026
+[locus 28/33] BICF2G630340139 (7452 reads, 24 samples)	9.002
+[locus 30/33] BICF2P239653 (7402 reads, 24 samples)	9.013
+[locus 1/33] BICF2P878735 (7272 reads, 22 samples)	2.989
+[locus 5/33] BICF2S22912279 (7065 reads, 24 samples)	2.791
+[locus 11/33] BICF2P153324 (6537 reads, 24 samples)	2.783
+Part 2 total: score 33 loci (621058 rows)	92.126
+Part 3 total: genotype calling	2.929
+TOTAL PIPELINE	182.84
