@@ -54,7 +54,7 @@ params:
   strand_downgrade: false # false = strand check only flags it, true = HT is changed to HM
 
   # Genotype prior
-  prior_type: "flat" # "flat" = 1/3 each genotype, "het_share" = one heterozygote share for every pair, "hwe" = locus specific HWE priors from the primer panel
+  prior_type: "ancestry" # "flat" = 1/3 each genotype, "het_share" = one heterozygote share for every pair, "hwe" = locus specific HWE priors from the primer panel
   prior_het_share: 0.15 # only for prior_type = "het_share": prior probability of a heterozygote (the two homozygotes share the rest)
   prior_population: "FreqWOLF_all" # only used when prior_type == "hwe": FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT, FreqWOLF_IB, FreqDOG
   prior_floor: 0.001 # floors for allele frequency
@@ -103,6 +103,7 @@ suppressMessages({
   library(rstan)
   library(knitr)
   library(bayesplot)
+  library(patchwork)
 })
 
 # Settings come from the params block in the YAML header, this turns them into usable variables
@@ -1099,6 +1100,116 @@ ggsave(file.path(comparison_parent_folder, "prior_comparison_calibration.png"), 
 ggsave(file.path(comparison_parent_folder, "prior_comparison_calibration.pdf"), calibration_comparison_plot, width = 11.69, height = 8.27, device = cairo_pdf)
 ggsave(file.path(comparison_parent_folder, "prior_comparison_error_vs_depth.png"), error_comparison_plot, width = 11.69, height = 8.27, dpi = 300, bg = "white")
 ggsave(file.path(comparison_parent_folder, "prior_comparison_error_vs_depth.pdf"), error_comparison_plot, width = 11.69, height = 8.27, device = cairo_pdf)
+```
+
+
+
+## Stan Diagnostic Plots
+This chunk contains MCMC diagnostic plots made with bayesplot package. it contains rank histograms, trace plots, Rhat, effective sample size, and so on. 
+
+```{r Stan_Diagnostic_Plots, eval = params$run_stan, fig.width = 11.69, fig.height = 8.27}
+### MCMC diagnostics plots saved to hierarchical bayes folder from the second chunk
+
+stan_diagnostics_folder <- file.path("Results", dataset_name, "Graphics", run_names$bayes_run_name, "Stan_Diagnostics_Plots")
+dir.create(stan_diagnostics_folder, showWarnings = FALSE, recursive = TRUE)
+
+color_scheme_set(c("#D9AF6B", "#F1E4DB", "#467378", "#9AA582", "#AF6458", "#657359")) 
+bayesplot_theme_set(theme_minimal(base_family = plot_font, base_size = 12) +
+                      theme(plot.title = element_text(face = "bold", hjust = 0.5),
+                            plot.subtitle = element_text(hjust = 0.5, size = 10),
+                            legend.position = "top",
+                            panel.grid.minor = element_blank()))
+
+# Which mdoel parameters to plot
+phi_hom_parameter <- intersect(c("phi_hom", "mu_log_phi_hom"), fit_hier@model_pars)[1] # list of the parameters
+diagnostic_pars <- c("mu_error", # typical sequencing error rate (logit scale)
+                     "sigma_error_locus", # how much error rate differs between loci
+                     "sigma_error_sample", # between samples
+                     "mu_bias", # typical allele balance in HT (logit scale, 0 = 50/50)
+                     "sigma_bias", # how much allele balance differs between loci
+                     "mu_log_phi_het", # typical overdispersion in HT (log scale)
+                     "sigma_phi_het", # how much it differs between samples
+                     phi_hom_parameter, # overdispersion in HM  (either shared, locus, sample or locussample)
+                     "lp__") # log posterior, how well the parameters fit the data and priors
+slow_mixing_pars <- c("mu_error", "sigma_error_sample", phi_hom_parameter) # the three shown in the rank histogram and autocorrelation plots
+posterior_array_hier <- as.array(fit_hier, pars = diagnostic_pars) # draws*chains*parameters
+nuts_hier <- nuts_params(fit_hier) # divergences, tree depth and energy of every draw
+
+# Rhat of every parameter and effective sample size ratio of every parameter (how many independent draws are my draws worth)
+rhat_hier <- rhat(fit_hier) # measures if the chains agree with each other
+neff_ratio_hier <- neff_ratio(fit_hier) # shouldnt be belowe 0.1
+
+# Plots made inside a list so it can later be used inside for loop, i can get rid of a lot of unnecessary ggsave lines for all the plots
+stan_diagnostic_plots <- list(
+  rank_overlay = mcmc_rank_overlay(posterior_array_hier, ref_line = TRUE, facet_args = list(ncol = 3)) +
+    labs(title = "Rank histograms per chain",
+         subtitle = "Flat and overlapping lines = all chains explore the same distribution"),
+  rank_hist = mcmc_rank_hist(posterior_array_hier, pars = slow_mixing_pars, ref_line = TRUE) +
+    labs(title = "Rank histograms, one panel per chain and parameter"),
+  trace = mcmc_trace(posterior_array_hier, np = nuts_hier, facet_args = list(ncol = 3)) +
+    labs(title = "Trace plots", subtitle = "Chains should overlap like fuzzy caterpillars, divergent draws would be marked in red"),
+  rhat = mcmc_rhat_hist(rhat_hier[is.finite(rhat_hier)], binwidth = 0.0005) +
+    labs(title = sprintf("Rhat of all %d saved quantities", sum(is.finite(rhat_hier))), subtitle = "Below 1.01 = chains agree"),
+  neff = mcmc_neff_hist(neff_ratio_hier[is.finite(neff_ratio_hier)], binwidth = 0.025) +
+    labs(title = "Effective sample size ratio of all saved quantities", subtitle = "Effective draws / total draws, above 0.1 is fine"),
+  autocorrelation = mcmc_acf(posterior_array_hier, pars = slow_mixing_pars, lags = 30) +
+    labs(title = "Autocorrelation per chain", subtitle = "How fast the chains forget their previous draw, faster drop = more effective draws"),
+  energy = mcmc_nuts_energy(nuts_hier) +
+    labs(title = "NUTS energy per chain", subtitle = "The two histograms should overlap, a narrow transition histogram = poor exploration"),
+  pairs = mcmc_pairs(posterior_array_hier, pars = c("mu_error", "sigma_error_locus", "sigma_error_sample", "sigma_phi_het"),
+                     transformations = list(sigma_error_locus = "log", sigma_error_sample = "log", sigma_phi_het = "log"),
+                     np = nuts_hier, off_diag_args = list(size = 0.4, alpha = 0.2),
+                     diag_args = list(bins = 40)))
+
+suppressMessages(for (plot_name in names(stan_diagnostic_plots)) {
+  print(stan_diagnostic_plots[[plot_name]])
+  ggsave(file.path(stan_diagnostics_folder, paste0("diagnostics_", plot_name, ".png")), stan_diagnostic_plots[[plot_name]],
+         width = 11.69, height = 8.27, dpi = 300, bg = "white")
+  ggsave(file.path(stan_diagnostics_folder, paste0("diagnostics_", plot_name, ".pdf")), stan_diagnostic_plots[[plot_name]],
+         width = 11.69, height = 8.27, device = cairo_pdf)
+})
+
+### Combined diagnostics figure: chain agreement, convergence of all parameters, efficiency and exploration
+diagnostics_panel_theme <- theme(plot.title = element_text(face = "bold", hjust = 0, size = 12),
+                                 plot.subtitle = element_text(hjust = 0, size = 9),
+                                 plot.title.position = "plot")
+
+stan_diagnostics_panel <- wrap_plots(
+  A = stan_diagnostic_plots$rank_overlay +
+    scale_x_continuous(expand = c(0, 0)) + 
+    labs(title = sprintf("A  Rank histograms per chain: %d chains x %d draws, %d divergent transitions",
+                         stan_chains, stan_iter - stan_warmup, get_num_divergent(fit_hier)),
+         subtitle = NULL) +
+    diagnostics_panel_theme + theme(panel.spacing.x = unit(1.5, "lines"), 
+                                    legend.margin = margin(0, 0, 0, 0), 
+                                    legend.box.spacing = unit(2, "pt")), 
+  B = stan_diagnostic_plots$rhat +
+    labs(title = sprintf("B  Rhat: max %.3f, %d of %d below 1.01", max(rhat_hier, na.rm = TRUE),
+                         sum(rhat_hier < 1.01, na.rm = TRUE), sum(is.finite(rhat_hier))),
+         subtitle = NULL) +
+    diagnostics_panel_theme + theme(legend.position = "none"),
+  C = stan_diagnostic_plots$neff +
+    geom_vline(xintercept = 0.1, linetype = "dashed", colour = "#7E4038", linewidth = 0.6) + # 0.1 = threshold
+    labs(title = "C  Sampling efficiency: effective / total draws", subtitle = NULL) + diagnostics_panel_theme +
+    theme(legend.text = element_text(size = 10), 
+          legend.key.size = unit(11, "pt"), 
+          legend.position = "inside",
+          legend.position.inside = c(0.98, 0.98), legend.justification.inside = c(1, 1), 
+          legend.direction = "vertical", 
+          legend.background = element_rect(fill = "white", colour = NA)), 
+  D = mcmc_nuts_energy(nuts_hier, merge_chains = TRUE) + 
+    labs(title = "D  NUTS energy: overlap = full exploration", subtitle = NULL) + diagnostics_panel_theme +
+    theme(legend.text = element_text(size = 11), 
+          legend.key.size = unit(11, "pt"), 
+          legend.position = "inside",
+          legend.position.inside = c(0.98, 0.98), legend.justification.inside = c(1, 1),
+          legend.direction = "vertical",
+          legend.background = element_rect(fill = "white", colour = NA)),
+  design = "AAA\nBCD", heights = c(1.6, 1))
+
+print(stan_diagnostics_panel)
+ggsave(file.path(stan_diagnostics_folder, "diagnostics_panel.png"), stan_diagnostics_panel, width = 11.69, height = 8.27, dpi = 300, bg = "white")
+ggsave(file.path(stan_diagnostics_folder, "diagnostics_panel.pdf"), stan_diagnostics_panel, width = 11.69, height = 8.27, device = cairo_pdf)
 ```
 
 

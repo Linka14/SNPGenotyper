@@ -10,7 +10,7 @@
 
 
 
-<meta name="date" content="2026-10-29" />
+<meta name="date" content="2026-10-30" />
 
 <title>Bayesian Genotyping</title>
 
@@ -3250,7 +3250,7 @@ border-radius: 0px;
 
 <h1 class="title toc-ignore">Bayesian Genotyping</h1>
 <h3 class="subtitle">Dataset: big</h3>
-<h4 class="date">29 October 2026</h4>
+<h4 class="date">30 October 2026</h4>
 
 </div>
 
@@ -3502,7 +3502,7 @@ as Phred</p>
 <span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a>  <span class="at">pars =</span> <span class="st">&quot;log_genotype_prior&quot;</span>, <span class="at">include =</span> <span class="cn">FALSE</span> <span class="co"># the per-pair prior is rebuilt in R from wolf_ancestry, not stored for every draw</span></span>
 <span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a>)</span>
 <span id="cb8-12"><a href="#cb8-12" tabindex="-1"></a><span class="fu">log_time</span>(<span class="fu">sprintf</span>(<span class="st">&quot;hierarchical sampling: %d pairs&quot;</span>, stan_data_hier<span class="sc">$</span>N), t0)</span></code></pre></div>
-<pre class="scroll-output"><code>[TIMING] hierarchical sampling: 777 pairs: 191.19 sec</code></pre>
+<pre class="scroll-output"><code>[TIMING] hierarchical sampling: 777 pairs: 157.24 sec</code></pre>
 <div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="co"># Chain convergence check. Rhat checks if the chains agree (should be at around 1.00, if they disagree &gt; 1.00)- Rhat compares two different spreads within each chain (variations of values inside the chain) and between chains (how far apart the averages are). Rhat should be below 1.01</span></span>
 <span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a>hyper_pars_hier <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">&quot;mu_error&quot;</span>, <span class="st">&quot;sigma_error_locus&quot;</span>, <span class="st">&quot;sigma_error_sample&quot;</span>, <span class="st">&quot;mu_bias&quot;</span>, <span class="st">&quot;sigma_bias&quot;</span>, <span class="st">&quot;phi_het&quot;</span>, <span class="st">&quot;sigma_phi_het&quot;</span>, <span class="st">&quot;phi_hom_typical&quot;</span>,</span>
 <span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a>                     <span class="cf">if</span> (stan_data_hier<span class="sc">$</span>phi_hom_by_locus <span class="sc">==</span> <span class="dv">1</span>) <span class="st">&quot;sigma_phi_hom_locus&quot;</span>,</span>
@@ -4173,7 +4173,7 @@ call are kept and how many of the errors can i get rid of.</p>
 <span id="cb18-44"><a href="#cb18-44" tabindex="-1"></a><span class="co"># Combined table</span></span>
 <span id="cb18-45"><a href="#cb18-45" tabindex="-1"></a>downsampled_draws <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(downsampled_list)</span>
 <span id="cb18-46"><a href="#cb18-46" tabindex="-1"></a><span class="fu">log_time</span>(<span class="fu">sprintf</span>(<span class="st">&quot;downsampling: %d pairs x %d depths x %d draws&quot;</span>, <span class="fu">nrow</span>(truth_pairs), <span class="fu">length</span>(read_depths_to_test), draws_per_depth), t0)</span></code></pre></div>
-<pre class="scroll-output"><code>[TIMING] downsampling: 749 pairs x 16 depths x 300 draws: 99.66 sec</code></pre>
+<pre class="scroll-output"><code>[TIMING] downsampling: 749 pairs x 16 depths x 300 draws: 88.54 sec</code></pre>
 <div class="sourceCode" id="cb20"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" tabindex="-1"></a><span class="do">### Step 3: Stan downsampling and scoring</span></span>
 <span id="cb20-2"><a href="#cb20-2" tabindex="-1"></a></span>
 <span id="cb20-3"><a href="#cb20-3" tabindex="-1"></a><span class="co">#Joins the dowssampling draws table with the data table of all the stans genotype probabilites</span></span>
@@ -4268,7 +4268,7 @@ call are kept and how many of the errors can i get rid of.</p>
 <span id="cb20-92"><a href="#cb20-92" tabindex="-1"></a>bootstrap_calibration_results <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(bootstrap_calibration_rounds)</span>
 <span id="cb20-93"><a href="#cb20-93" tabindex="-1"></a>bootstrap_statistics_results <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(bootstrap_statistics_rounds)</span>
 <span id="cb20-94"><a href="#cb20-94" tabindex="-1"></a><span class="fu">log_time</span>(<span class="fu">sprintf</span>(<span class="st">&quot;pair bootstrap: %d rounds&quot;</span>, bootstrap_rounds), t0)</span></code></pre></div>
-<pre class="scroll-output"><code>[TIMING] pair bootstrap: 1000 rounds: 1.86 sec</code></pre>
+<pre class="scroll-output"><code>[TIMING] pair bootstrap: 1000 rounds: 1.61 sec</code></pre>
 <div class="sourceCode" id="cb22"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb22-1"><a href="#cb22-1" tabindex="-1"></a><span class="do">### Step 4: error rate and read depth</span></span>
 <span id="cb22-2"><a href="#cb22-2" tabindex="-1"></a></span>
 <span id="cb22-3"><a href="#cb22-3" tabindex="-1"></a><span class="co"># Data prep and finals tables for the plots, this table stack the results twice once labelled as all pairs once by the true class (for groups by step)</span></span>
@@ -5887,7 +5887,7 @@ Settings used for this run
 <tbody>
 <tr class="odd">
 <td align="left">run_date</td>
-<td align="left">2026-10-29 16:24</td>
+<td align="left">2026-10-30 14:32</td>
 </tr>
 <tr class="even">
 <td align="left">dataset_name</td>
