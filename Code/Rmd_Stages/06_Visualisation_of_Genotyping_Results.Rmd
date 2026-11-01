@@ -52,10 +52,12 @@ params:
   HT_min_frequence: 0.20 # minor allele must be larger or equal to call HT
 
   # Bayesian run to plot (same settings as Bayesian genotyping, the prior makes up its results folder name)
-  prior_type: "flat" # "flat", "het_share" or "hwe"
+  prior_type: "ancestry" # "flat", "het_share" or "hwe"
   prior_het_share: 0.15 # only used when prior_type == "het_share"
-  prior_population: "FreqWOLF_all" # only used when prior_type == "hwe"
+  prior_population: "FreqWOLF_all" # only used when prior_type == hwe"
   prior_floor: 0.001 # only used when prior_type == "hwe"
+  ancestry_prior_shape: 1 # only used when prior_type is "ancestry"
+  phi_hom_structure: "shared" # "shared", "locus", "sample" or "locus_sample"
 
   # Which parts run: true = run, false = skip
   run_basic_plots: true # Basic visualization for ASP genotypes and Hierarchical bayes chunks, HWE and HMHT Heatmaps
@@ -126,7 +128,8 @@ genotypes_dir <- file.path("Results", dataset_name, "Genotypes_results")
 
 # Shared function for building accurate settings based folder names
 run_names <- build_run_names(input_type, use_anchors, anchor_length, threshold_type, error_rate, min_score_fraction,
-                             prior_type, prior_het_share, prior_population, prior_floor, probe_type = probe_type)
+                             prior_type, prior_het_share, prior_population, prior_floor, probe_type = probe_type,
+                             ancestry_prior_shape = ancestry_prior_shape, phi_hom_structure = phi_hom_structure)
 asp_run_name <- run_names$asp_run_name
 prior_label <- run_names$prior_label
 bayes_run_name <- run_names$bayes_run_name
@@ -143,11 +146,12 @@ match_lookup <- build_match_lookup(primer_quality)
 mismatch_cost_lookup <- vapply(0:93, function(q) mismatch_cost_f(q, primer_quality), numeric(1))
 
 # Output paths for Identified, Bayes and MiniMap2 plots
-out_dir <- file.path(graphics_dir, "Identified_genotypes_comparison_plots")
+out_dir <- file.path(graphics_dir, "ASP_Genotypes_Results_Plots")
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-bayes_out_dir <- file.path(graphics_dir, bayes_run_name)
+bayes_run_graphics_dir <- file.path(graphics_dir, "STAN_Hierarchical", run_names$bayes_settings_label) 
+bayes_out_dir <- file.path(bayes_run_graphics_dir, "Basic_Results_Plots")
 dir.create(bayes_out_dir, recursive = TRUE, showWarnings = FALSE)
-mm2_out_dir <- file.path(graphics_dir, "Minimap2_genotypes")
+mm2_out_dir <- file.path(graphics_dir, "Minimap2_Genotypes_Results_Plots")
 dir.create(mm2_out_dir, recursive = TRUE, showWarnings = FALSE)
 
 # Imported shared data between all chunks, loaded and cleaned once in setup
@@ -349,14 +353,14 @@ depth_violin_f <- function(data, title, x_label, y_label) {
 # Depth per locus ordered by median depth, violin plots
 depth_plot_locus <- depth_violin_f(depth_data %>% mutate(row = reorder(locus, depth, FUN = median, na.rm = TRUE), fill_group = "all"), "Number of reads distribution per locus", "Reads per sample", "Locus")
 print(depth_plot_locus)
-ggsave(file.path(out_dir, "read_distribution_per_locus_styled_identified.png"), depth_plot_locus, width = 8.27, height = 11.69, dpi = 300, bg = "white")
-ggsave(file.path(out_dir, "read_distribution_per_locus_styled_identified.pdf"), depth_plot_locus, width = 8.27, height = 11.69, device = cairo_pdf)
+ggsave(file.path(out_dir, "read_distribution_per_locus_violin.png"), depth_plot_locus, width = 8.27, height = 11.69, dpi = 300, bg = "white")
+ggsave(file.path(out_dir, "read_distribution_per_locus_violin.pdf"), depth_plot_locus, width = 8.27, height = 11.69, device = cairo_pdf)
 
 # 6. Plot: Depth per sample ordered by median depth, violin plots
 depth_plot_sample <- depth_violin_f(depth_data %>% mutate(row = reorder(sample, depth, FUN = median, na.rm = TRUE), fill_group = "all"), "Number of reads distribution per sample", "Reads per locus", "Sample")
 print(depth_plot_sample)
-ggsave(file.path(out_dir, "read_distribution_per_sample_styled_identified.png"), depth_plot_sample, width = 8.27, height = 11.69, dpi = 300, bg = "white")
-ggsave(file.path(out_dir, "read_distribution_per_sample_styled_identified.pdf"), depth_plot_sample, width = 8.27, height = 11.69, device = cairo_pdf)
+ggsave(file.path(out_dir, "read_distribution_per_sample_violin.png"), depth_plot_sample, width = 8.27, height = 11.69, dpi = 300, bg = "white")
+ggsave(file.path(out_dir, "read_distribution_per_sample_violin.pdf"), depth_plot_sample, width = 8.27, height = 11.69, device = cairo_pdf)
 
 # 7. Plot: Depth per locus family ordered in groups by median depth, violin plots
 depth_grouped_order <- depth_data %>%
@@ -367,8 +371,8 @@ depth_grouped_order <- depth_data %>%
 
 depth_plot_grouped <- depth_violin_f(depth_data %>% mutate(row = factor(locus, levels = depth_grouped_order), fill_group = locus_group), "Read depth distribution per locus, grouped by locus family", "Reads per sample", "Locus")
 print(depth_plot_grouped)
-ggsave(file.path(out_dir, "read_depth_per_locus_grouped_violin_styled_identified.png"), depth_plot_grouped, width = 8.27, height = 11.69, dpi = 300, bg = "white")
-ggsave(file.path(out_dir, "read_depth_per_locus_grouped_violin_styled_identified.pdf"), depth_plot_grouped, width = 8.27, height = 11.69, device = cairo_pdf)
+ggsave(file.path(out_dir, "read_depth_per_locus_grouped_violin.png"), depth_plot_grouped, width = 8.27, height = 11.69, dpi = 300, bg = "white")
+ggsave(file.path(out_dir, "read_depth_per_locus_grouped_violin.pdf"), depth_plot_grouped, width = 8.27, height = 11.69, device = cairo_pdf)
 ```
 
 
@@ -923,12 +927,12 @@ bayes_genotypes <- transmute(bayes_raw, sample = barcode, locus, genotype, depth
 mm2_genotypes <- transmute(mm2_raw, sample = barcode, locus, genotype, depth) # Minimap 2 calls with their read depth
 
 identified_zygosity_plot <- make_genotype_plot(identified_genotypes, "ASP", ref,
-                                               out_path = file.path(out_dir, "genotype_zygosity_heatmap_identified.png"),
+                                               out_path = file.path(out_dir, "genotype_zygosity_heatmap.png"),
                                                plot_title = "ASP final called genotypes by zygosity",
                                                type = "zygosity", panel_title = "Final ASP Genotypes")
 
 identified_depth_plot <- make_genotype_plot(identified_genotypes, "ASP", ref,
-                                            out_path = file.path(out_dir, "genotype_depth_heatmap_identified.png"),
+                                            out_path = file.path(out_dir, "genotype_depth_heatmap.png"),
                                             plot_title = "ASP final called genotypes by read depth",
                                             type = "depth", panel_title = "Final ASP Genotypes")
 
@@ -976,7 +980,7 @@ Chunk contains to editable variables: minimum required depth threshold and QD qu
 # QD (GATK-like) and alignment score-margin analysis. 
 # Seperate paths for different types of genotypes
 qd_asp_dir <- file.path(out_dir, "QD_margin_analysis")
-qd_bayes_dir <- file.path(bayes_out_dir, "QD_margin_analysis") 
+qd_bayes_dir <- file.path(bayes_run_graphics_dir, "QD_margin_analysis")
 dir.create(qd_asp_dir, showWarnings = FALSE, recursive = TRUE)
 dir.create(qd_bayes_dir, showWarnings = FALSE, recursive = TRUE)
 
@@ -1514,7 +1518,7 @@ For just described methods one assumption must hold, its that all reads or every
 ```{r GATK_Fisher_Strand_Analysis, eval = params$run_filtration_parameters, fig.width = 11.69, fig.height = 8.27, out.width = "100%"}
 # This chunk contains FS per pair, allelef frequency by strand with SOR and FS, strand odds ratio of HM minor allele reads and GLMM that checks the odds ratio results.
 # Output folder for Fisher strand analysis
-out_dir_FS <- file.path(graphics_dir, "Genotype_filtration_parameters/Fisher_strand_analysis")
+out_dir_FS <- file.path(graphics_dir, "Genotype_Filtration_Parameters/Fisher_strand_analysis")
 dir.create(out_dir_FS, showWarnings = FALSE, recursive = TRUE)
 
 # Reads form the ASP run with direction column
@@ -1864,6 +1868,7 @@ sbo_loci <- sbo_hm_pairs %>%
          or_label = ifelse(or >= 1, sprintf("%.1fx FWD (%.1f-%.1f)", or, or_low, or_high),
                            sprintf("%.1fx RV (%.1f-%.1f)", 1 / or, 1 / or_high, 1 / or_low)),
          label_colour = case_when(!significant ~ "ns", or >= 1 ~ "FWD", TRUE ~ "RV")) # grey = not significant
+write_tsv(sbo_loci, file.path(out_dir_FS, "strand_bias_by_locus.tsv")) 
 
 sbo_hm_pairs_ordered <- mutate(sbo_hm_pairs, locus = factor(locus, levels = levels(sbo_loci$locus))) # same locus order as the figure
 kable(select(sbo_loci, locus, samples, or, or_low, or_high, p, homogeneity_p), digits = 3,
@@ -2543,7 +2548,7 @@ stopifnot("run the setup chunk first (dataset_name, min_snp_quality)" = exists("
           "install the lme4 package: install.packages('lme4')" = requireNamespace("lme4", quietly = TRUE))
 
 # Output paths
-out_dir_snpq <- file.path(graphics_dir, "SNP_quality_by_locus")
+out_dir_snpq <- file.path(graphics_dir, "SNP_Quality_by_Locus")
 dir.create(out_dir_snpq, showWarnings = FALSE, recursive = TRUE)
 
 snpq_threshold <- 20 # reference threshold for the % labels on the ECDF
@@ -2748,7 +2753,7 @@ This plot shows minor allele fraction (MAF) for every locus sample pair with dep
 ```{r Minor_Allele_Fraction_HT_vs_HM, eval = params$run_filtration_parameters, fig.width = 8.27, fig.height = 5.85, out.width = "70%"}
 
 # Output path
-maf_out <- file.path(graphics_dir, "Minor_allele_fraction")
+maf_out <- file.path(graphics_dir, "Minor_Allele_Fraction")
 dir.create(maf_out, recursive = TRUE, showWarnings = FALSE)
 
 maf_min_reads <- 10 # minimum depth per pair
@@ -2849,7 +2854,7 @@ stopifnot("run the setup chunk first" = exists("graphics_dir") && exists("max_mi
             exists("score_reads_against_primers_2pwalign_v8") && exists("match_lookup") && exists("mismatch_cost_lookup"))
 
 # Output paths
-qsim_out_dir <- file.path(graphics_dir, "Quality_scoring_simulation")
+qsim_out_dir <- file.path(graphics_dir, "Quality_Scoring_Simulation")
 dir.create(qsim_out_dir, showWarnings = FALSE, recursive = TRUE)
 
 # Variables of the new threshold calculation
@@ -3034,8 +3039,8 @@ These three plots show progress of speed optimization analysis from naive v1 to 
 # Folders for timing logs and output paths
 speed_logs_small <- "Results/small/Genotypes_results/old/Identified_ASP_genotypes"
 speed_logs_big <- "Results/big/Genotypes_results/old/Identified_ASP_genotypes"
-out_dir_speed_opt_small <- "Results/small/Graphics/Speed_optimization_analysis"
-out_dir_speed_opt <- "Results/big/Graphics/Speed_optimization_analysis"
+out_dir_speed_opt_small <- "Results/small/Graphics/Speed_Optimization_Analysis"
+out_dir_speed_opt <- "Results/big/Graphics/Speed_Optimization_Analysis"
 dir.create(out_dir_speed_opt_small, recursive = TRUE, showWarnings = FALSE)
 dir.create(out_dir_speed_opt, recursive = TRUE, showWarnings = FALSE)
 
@@ -3452,7 +3457,7 @@ Analysis and diagnosis of why this BICF2G630340139 locus fails at 13 different p
 stopifnot("run the setup chunk first (asp_functions.R)" = exists("score_reads_against_primers_2pwalign_v8") && exists("build_match_lookup"))
 
 # Output path
-hop_out_dir <- file.path(graphics_dir, "Problematic_locus_diagnosis")
+hop_out_dir <- file.path(graphics_dir, "Problematic_Locus_Diagnosis")
 dir.create(hop_out_dir, recursive = TRUE, showWarnings = FALSE)
 
 # Settings for the original problem, reweritten here manually for visualization
@@ -3840,7 +3845,7 @@ ggsave(file.path(hop_out_dir, "primer_quality_settings.pdf"), plot_setting_compa
 
 ```{r Demultiplexing_and_Filtration_Process_Visualized, eval = params$run_filtration_vis, fig.width = 11.69, fig.height = 8.27, out.width = "100%"}
 # Input and output paths
-out_dir_sankey <- file.path(graphics_dir, "Demultiplexing_and_filtration_visualization")
+out_dir_sankey <- file.path(graphics_dir, "Demultiplexing_and_Filtration_Visualization")
 dir.create(out_dir_sankey, recursive = TRUE, showWarnings = FALSE)
 raw_basecalled_dir <- file.path("Data/Raw_data", dataset_name) # Raw reads
 counts_cache_file <- file.path(out_dir_sankey, "fastq_read_counts_all.rds") # cache for fastq counts

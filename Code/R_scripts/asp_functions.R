@@ -28,16 +28,22 @@ build_run_names <- function(input_type, use_anchors, anchor_length, threshold_ty
                                if (probe_type == "reference") "_reference" # reference probes get their own folders, and have no separate anchor (centred window)
                                else if (use_anchors) paste0("_anchor", anchor_length) else "_noanchor",
                                if (threshold_type == "errors") paste0("_errors", error_rate) else paste0("_fraction", min_score_fraction))
+  asp_short_label <- paste0(sub("padded$", "pad", input_type), # shorter versions of the names
+                            if (probe_type == "reference") "_ref"
+                            else if (use_anchors) paste0("_a", anchor_length) else "_noa",
+                            if (threshold_type == "errors") paste0("_e", error_rate) else paste0("_f", min_score_fraction))
+  population_short <- sub("^FreqWOLF_", "W", prior_population) 
   prior_label <- switch(prior_type,
-                        flat = "priorflat",
-                        het_share = paste0("priorhet", prior_het_share),
-                        hwe = paste0("priorhwe_", prior_population, "_floor", prior_floor),
-                        ancestry = paste0("priorancestry_", prior_population, "_FreqDOG_floor", prior_floor, "_beta", ancestry_prior_shape),
+                        flat = "flat",
+                        het_share = paste0("het", prior_het_share),
+                        hwe = paste0("hwe_", population_short, "_fl", prior_floor),
+                        ancestry = paste0("anc_", population_short, "_fl", prior_floor, "_b", ancestry_prior_shape),
                         stop("prior_type must be \"flat\", \"het_share\", \"hwe\" or \"ancestry\"")) # used in folder names, so runs with different priors never overwrite each other
-  if (phi_hom_structure != "shared") prior_label <- paste0(prior_label, "_phihom", phi_hom_structure) # homozygote overdispersion structure, only added when not the default
-  list(asp_run_name = paste0("Identified_ASP_genotypes_", asp_settings_label),
+  if (phi_hom_structure != "shared") prior_label <- paste0(prior_label, "_phi", switch(phi_hom_structure, locus = "L", sample = "S", locus_sample = "LS", phi_hom_structure)) # homozygote overdispersion structure, only added when not the def 
+  list(asp_run_name = file.path("Identified_ASP_genotypes", asp_settings_label), 
        prior_label = prior_label,
-       bayes_run_name = paste0("Base_Mixture_STAN_Hierarchical_ASP_genotypes_", asp_settings_label, "_", prior_label))
+       bayes_run_name = file.path("STAN_Hierarchical_ASP_genotypes", paste0(asp_short_label, "_", prior_label)), 
+       bayes_settings_label = paste0(asp_short_label, "_", prior_label))
 }
 
 ### Helper function for making .fastq files names, input_type picks the padded or the unpadded ObiTools4 identified .fastq files.

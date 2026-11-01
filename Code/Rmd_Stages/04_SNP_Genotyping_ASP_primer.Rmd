@@ -533,9 +533,6 @@ kable(as.data.frame(table(failed_checks_per_read[failed_checks_per_read > 0])), 
 ```
 
 
-```{r}
-readLines("Data/Processed_data/big/Demultiplexed_sequence_data/Identified_sample_sequences_Obi4/barcode01_identified.fastq", n = 1)
-```
 
 ## Timing Summary
 

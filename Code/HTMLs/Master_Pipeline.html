@@ -10,7 +10,7 @@
 
 
 
-<meta name="date" content="2026-10-30" />
+<meta name="date" content="2026-10-31" />
 
 <title>Master pipeline</title>
 
@@ -3249,7 +3249,7 @@ border-radius: 0px;
 
 
 <h1 class="title toc-ignore">Master pipeline</h1>
-<h4 class="date">30 October 2026</h4>
+<h4 class="date">31 October 2026</h4>
 
 </div>
 
@@ -3408,9 +3408,9 @@ settings.</p>
 <h2>Stage 5: Bayesian genotyping</h2>
 <div class="sourceCode" id="cb17"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" tabindex="-1"></a>settings_05_bayesian <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
 <span id="cb17-2"><a href="#cb17-2" tabindex="-1"></a>  <span class="co"># What to run</span></span>
-<span id="cb17-3"><a href="#cb17-3" tabindex="-1"></a>  <span class="at">run_stan =</span> <span class="cn">TRUE</span>, <span class="co"># runs Bayes model</span></span>
-<span id="cb17-4"><a href="#cb17-4" tabindex="-1"></a>  <span class="at">run_downsampling =</span> <span class="cn">TRUE</span>, <span class="co"># runs downsampling and calibration statistics (needs run_stan = TRUE in the same run)</span></span>
-<span id="cb17-5"><a href="#cb17-5" tabindex="-1"></a>  <span class="at">run_downsampling_plots =</span> <span class="cn">TRUE</span>, <span class="co"># runs visualisations (from this run, or from the saved run with the same settings)</span></span>
+<span id="cb17-3"><a href="#cb17-3" tabindex="-1"></a>  <span class="at">run_stan =</span> <span class="cn">FALSE</span>, <span class="co"># runs Bayes model</span></span>
+<span id="cb17-4"><a href="#cb17-4" tabindex="-1"></a>  <span class="at">run_downsampling =</span> <span class="cn">FALSE</span>, <span class="co"># runs downsampling and calibration statistics (needs run_stan = TRUE in the same run)</span></span>
+<span id="cb17-5"><a href="#cb17-5" tabindex="-1"></a>  <span class="at">run_stan_plots =</span> <span class="cn">TRUE</span>, <span class="co"># runs visualisations (from this run, or from the saved run with the same settings)</span></span>
 <span id="cb17-6"><a href="#cb17-6" tabindex="-1"></a>  </span>
 <span id="cb17-7"><a href="#cb17-7" tabindex="-1"></a>  <span class="co"># Genotype prior</span></span>
 <span id="cb17-8"><a href="#cb17-8" tabindex="-1"></a>  <span class="at">prior_type =</span> <span class="st">&quot;ancestry&quot;</span>, <span class="co"># &quot;flat&quot; = 1/3 each genotype, &quot;het_share&quot; = one heterozygote share for every pair, &quot;hwe&quot; = locus specific HWE priors from the panel frequencies or ancestry  </span></span>
@@ -3435,8 +3435,8 @@ settings.</p>
 <span id="cb17-27"><a href="#cb17-27" tabindex="-1"></a>)</span></code></pre></div>
 <div class="sourceCode" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" tabindex="-1"></a>timing_stage_05 <span class="ot">&lt;-</span> <span class="fu">run_stage</span>(<span class="st">&quot;Code/Rmd_Stages/05_SNP_Bayesian_Genotyping.Rmd&quot;</span>,</span>
 <span id="cb18-2"><a href="#cb18-2" tabindex="-1"></a>  <span class="fu">c</span>(shared_settings, settings_05_bayesian), <span class="at">run =</span> run_05_bayesian)</span></code></pre></div>
-<pre><code>STARTED: Code/Rmd_Stages/05_SNP_Bayesian_Genotyping.Rmd at 14:32</code></pre>
-<pre><code>FINISHED: Code/Rmd_Stages/05_SNP_Bayesian_Genotyping.Rmd in 5.1 min</code></pre>
+<pre><code>STARTED: Code/Rmd_Stages/05_SNP_Bayesian_Genotyping.Rmd at 19:35</code></pre>
+<pre><code>FINISHED: Code/Rmd_Stages/05_SNP_Bayesian_Genotyping.Rmd in 0.5 min</code></pre>
 </div>
 <div id="stage-6-visualization-and-data-analysis" class="section level2">
 <h2>Stage 6: Visualization and data analysis</h2>
@@ -3467,7 +3467,7 @@ settings.</p>
 <span id="cb27-2"><a href="#cb27-2" tabindex="-1"></a>stage_timings <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(timing_stage_01, timing_stage_02, timing_stage_03, timing_stage_04, timing_stage_05, timing_stage_06, timing_stage_07)</span>
 <span id="cb27-3"><a href="#cb27-3" tabindex="-1"></a><span class="fu">kable</span>(stage_timings, <span class="at">caption =</span> <span class="fu">sprintf</span>(<span class="st">&quot;Total: %.1f min&quot;</span>, <span class="fu">sum</span>(stage_timings<span class="sc">$</span>minutes))) <span class="co">#prepares it for better looking output in HTML</span></span></code></pre></div>
 <table>
-<caption>Total: 5.1 min</caption>
+<caption>Total: 0.5 min</caption>
 <thead>
 <tr class="header">
 <th align="left">stage</th>
@@ -3477,7 +3477,7 @@ settings.</p>
 <tbody>
 <tr class="odd">
 <td align="left">05_SNP_Bayesian_Genotyping.Rmd</td>
-<td align="right">5.1</td>
+<td align="right">0.5</td>
 </tr>
 </tbody>
 </table>

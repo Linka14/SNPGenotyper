@@ -33,7 +33,7 @@ params:
   # What to run
   run_stan: TRUE # runs Bayes model
   run_downsampling: TRUE # runs downsampling and calibration statistics (needs run_stan: TRUE in the same run)
-  run_downsampling_plots: TRUE # runs visualisations (from this run, or from the saved run with the same settings)
+  run_stan_plots: TRUE # runs visualisations (from this run, or from the saved run with the same settings)
   
   # Input reads and primers settings
   input_type: "unpadded" # "padded" or "unpadded"
@@ -130,12 +130,20 @@ run_names <- build_run_names(input_type, use_anchors, anchor_length, threshold_t
 output_folder_name_identified <- file.path("Results", dataset_name, "Genotypes_results", run_names$asp_run_name)
 stopifnot("ASP results folder not found, run 04_SNP_Genotyping_ASP_primer.Rmd first with the same settings" = dir.exists(output_folder_name_identified))
 
+# Graphics folders for stan and downsampling plots
+stan_graphics_folder <- file.path("Results", dataset_name, "Graphics", "STAN_Hierarchical", run_names$bayes_settings_label)
+read_depths_to_test <- unlist(read_depths_to_test) 
+downsampling_output_folder <- file.path(stan_graphics_folder,
+                                        paste0("Downsampling_calibration", if (strand_downgrade) "_sdown" else "_sflag",
+                                               sprintf("_r%d_d%d_n%d", minimum_reads_for_truth_pair, max(read_depths_to_test), draws_per_depth))) 
+
 # primer panel, only locus and the two alleles are needed here (copied from 04, without trimming and anchors)
 # the sheet is read once: panel_sheet keeps every column (also the allele frequencies for the HWE prior), panel only the columns needed here
 panel_sheet <- read_excel(primer_panel_path, sheet = "Final panel", .name_repair = "minimal")
 panel <- panel_sheet[, c("SNP name", "Allele 1", "Allele 2", "ASP1_SEQ (forward allele1)", "ASP2_SEQ (forward allele2)")]
 names(panel) <- c("locus", "allele1", "allele2", "asp1_seq", "asp2_seq")
 panel <- panel[!is.na(panel$asp1_seq) & !is.na(panel$asp2_seq), ]
+
 
 timing_log <- list() # empty timing log, log_time() adds one row per step
 ```
@@ -159,7 +167,7 @@ Allele bias per locus: in theory two allele specific priors per locus should hav
 
 ```{r Hierarchical_Stan_Genotyping, eval = params$run_stan}
 # Folder name preparation based on previous ASP run and settings used
-settings_suffix_hier <- sub("^Identified_ASP_genotypes_", "", run_names$asp_run_name) # same settings label
+settings_suffix_hier <- basename(run_names$asp_run_name) # same settings label
 prior_label_hier <- run_names$prior_label
 output_folder_name_hier <- file.path("Results", dataset_name, "Genotypes_results", run_names$bayes_run_name)
 dir.create(output_folder_name_hier, showWarnings = FALSE, recursive = TRUE)
@@ -353,8 +361,11 @@ write_tsv(combined_genotypes_hier, file.path(output_folder_name_hier, "all_barco
 write_tsv(locus_params_hier, file.path(output_folder_name_hier, "locus_parameters_hierarchical.tsv"))
 write_tsv(sample_params_hier, file.path(output_folder_name_hier, "sample_parameters_hierarchical.tsv"))
 
-#Posterior draws for the plots in .rds format
-saveRDS(draws_hier, file.path(output_folder_name_hier, "draws_hierarchical.rds"))
+#Posterior draws and other objects for the plots in .rds format
+saveRDS(list(fit_hier = fit_hier, draws_hier = draws_hier, stan_data_hier = stan_data_hier, stan_rows_hier = stan_rows_hier,
+             samples_hier = samples_hier, loci_hier = loci_hier, post_hier = post_hier,
+             combined_genotypes_hier = combined_genotypes_hier),
+        file.path(output_folder_name_hier, "stan_plot_inputs.rds"))
 # Convergence table, all the parameters summary
 write_tsv(data.frame(parameter = rownames(hyper_summary_hier), hyper_summary_hier, check.names = FALSE),
           file.path(output_folder_name_hier, "hyperparameters_hierarchical.tsv"))
@@ -405,6 +416,7 @@ Plot for GQ threshold trade off, if i use it as a filter, how many call are kept
 ```{r Downsampling_Calibration_Compute, eval = params$run_downsampling}
 # Check if the first chunk ran
 stopifnot("run the Stan chunk first" = exists("combined_genotypes_hier"))
+dir.create(downsampling_output_folder, showWarnings = FALSE, recursive = TRUE)
 
 # Reference genotypes and settings
 reference_genotypes_file <- file.path("Data/Supporting_data/Reference_genotypes", paste0("genotypes_", dataset_name, ".tsv"))
@@ -412,15 +424,6 @@ read_depths_to_test <- unlist(read_depths_to_test) # the YAML list becomes a pla
 gq_bin_edges <- c(seq(0, 30, by = 2.5), 35, 40, 50, Inf) 
 gq_thresholds_to_test <- 1:40 # GQ thresholds for the trade-off plot
 stopifnot("the deepest read depth to test must not be larger than minimum_reads_for_truth_pair" = max(read_depths_to_test) <= minimum_reads_for_truth_pair)
-
-# Creation of the downsampling folder label so each run goes into a separate folder
-downsampling_settings_label <- sprintf("minreads%d_maxdepth%d_draws%d", minimum_reads_for_truth_pair, max(read_depths_to_test), draws_per_depth)
-downsampling_output_folder <- file.path("Results", dataset_name, "Graphics", "Downsampling_calibration", # one folder that gathers every downsampling run
-                                        paste0(settings_suffix_hier,
-                                               if (strand_downgrade) "_stranddowngrade" else "_strandflag",
-                                               "_", prior_label_hier,
-                                               "_", downsampling_settings_label))
-dir.create(downsampling_output_folder, showWarnings = FALSE, recursive = TRUE)
 
 ### Helper functions
 # Makes sure the alleles are always in the same alpabetical order (reference panel was not created inside the script, so it might have different labels)
@@ -799,27 +802,15 @@ saveRDS(downsampling_plot_inputs, file.path(downsampling_output_folder, "downsam
 
 
 
-## Downsampling and genotype confidence calibration - PLOTS
-First chunk makes sure the folder names are correct for inputs and outputs when running only the plots. If everything is processed th efolder names are automatically correct.
-
-```{r Downsampling_Plots_Only_Folder, eval = params$run_downsampling_plots && !params$run_downsampling}
-# Plots only: the folder of the existing run with the current YAML settings, built the same way as in the compute chunk
-settings_suffix_hier <- sub("^Identified_ASP_genotypes_", "", basename(output_folder_name_identified))
-read_depths_to_test <- unlist(read_depths_to_test)
-downsampling_settings_label <- sprintf("minreads%d_maxdepth%d_draws%d", minimum_reads_for_truth_pair, max(read_depths_to_test), draws_per_depth)
-downsampling_output_folder <- file.path("Results", dataset_name, "Graphics", "Downsampling_calibration",
-                                        paste0(settings_suffix_hier,
-                                               if (strand_downgrade) "_stranddowngrade" else "_strandflag",
-                                               "_", run_names$prior_label,
-                                               "_", downsampling_settings_label))
-stopifnot("no saved run with these settings, run the downsampling first" = file.exists(file.path(downsampling_output_folder, "downsampling_plot_inputs.rds")))
-```
-
 This chunk makes three plots for downsampling and calibration visualsation, comparison of error rates between HM and HT against read depth, paired difference between stan and naive caller showing how many miscalls are made, and the GQ threshold simulation for using it as a filter.
 
-```{r Downsampling_Calibration_Plots, eval = params$run_downsampling_plots, fig.width = 8.27, fig.height = 5.85}
+```{r Downsampling_Calibration_Plots, eval = params$run_stan_plots, fig.width = 8.27, fig.height = 5.85}
 ### Chunk for plotting the calibration and other results from the previous data prep chunk
-if (!exists("downsampling_plot_inputs")) downsampling_plot_inputs <- readRDS(file.path(downsampling_output_folder, "downsampling_plot_inputs.rds"))
+# Reading saves results so plotting chunks can be run without stan
+if (!exists("downsampling_plot_inputs")) {
+  stopifnot("no saved run with these settings, run the downsampling first" = file.exists(file.path(downsampling_output_folder, "downsampling_plot_inputs.rds")))
+  downsampling_plot_inputs <- readRDS(file.path(downsampling_output_folder, "downsampling_plot_inputs.rds"))
+}
 invisible(list2env(downsampling_plot_inputs[names(downsampling_plot_inputs) != "downsampling_output_folder"], envir = environment())) 
 
 # Plot settings
@@ -934,7 +925,7 @@ ggsave(file.path(downsampling_output_folder, "gq_cutoff_tradeoff.pdf"), gq_trade
 
 ## Genotype Calibration Plot
 This chunk contains data prep and genotype calibration plot.
-```{r Genotype_Calibration_Plot, eval = params$run_downsampling_plots, fig.width = 8.27, fig.height = 8.27}
+```{r Genotype_Calibration_Plot, eval = params$run_stan_plots, fig.width = 8.27, fig.height = 8.27}
 ### Calibration plot: HM and HT with bands
 calibration_colours <- c("All calls" = "grey25", "Homozygous calls" = hm_dark, "Heterozygous calls" = ht_dark) 
 
@@ -993,16 +984,16 @@ ggsave(file.path(downsampling_output_folder, "genotype_calibration.pdf"), calibr
 
 ## Genotype Prior Comparison Plots
 This chunk contains comparison plots between different priors used on the same settings, it contains data prep and plot for error rate and genotype calibration comparison.
-```{r Prior_Comparison_Plots, eval = params$run_downsampling_plots, fig.width = 11.69, fig.height = 8.27}
+```{r Prior_Comparison_Plots, eval = params$run_stan_plots, fig.width = 11.69, fig.height = 8.27}
 ### Prior comparison plot with same settings but three different priors
 # Importing the files
-comparison_parent_folder <- file.path("Results", dataset_name, "Graphics", "Downsampling_calibration")
+comparison_parent_folder <- file.path("Results", dataset_name, "Graphics", "STAN_Hierarchical")
 comparison_folders <- file.path(comparison_parent_folder, c(
-  "unpadded_anchor3_errors0.08_strandflag_priorflat_minreads75_maxdepth75_draws300",
-  "unpadded_anchor3_errors0.08_strandflag_priorhet0.15_minreads75_maxdepth75_draws300",
-  "unpadded_anchor3_errors0.08_strandflag_priorhwe_FreqWOLF_all_floor0.001_minreads75_maxdepth75_draws300",
-  "unpadded_anchor3_errors0.08_strandflag_priorancestry_FreqWOLF_all_FreqDOG_floor0.001_beta1_minreads75_maxdepth75_draws300",
-  "unpadded_anchor3_errors0.08_strandflag_priorancestry_FreqWOLF_EastEurope_FreqDOG_floor0.001_beta1_minreads75_maxdepth75_draws300"))
+  "unpad_a3_e0.08_flat",
+  "unpad_a3_e0.08_het0.15",
+  "unpad_a3_e0.08_hwe_Wall_fl0.001",
+  "unpad_a3_e0.08_anc_Wall_fl0.001_b1",
+  "unpad_a3_e0.08_anc_WEastEurope_fl0.001_b1"), "Downsampling_calibration_sflag_r75_d75_n300") # run folders, then the downsampling folder inside each
 prior_palette <- c("#E0A526", "#2F6690", "#8E5C8E", "#C2502E", "#5E8C3A")
 
 # Saved results of each run, all runs must share the same truth set
@@ -1107,10 +1098,16 @@ ggsave(file.path(comparison_parent_folder, "prior_comparison_error_vs_depth.pdf"
 ## Stan Diagnostic Plots
 This chunk contains MCMC diagnostic plots made with bayesplot package. it contains rank histograms, trace plots, Rhat, effective sample size, and so on. 
 
-```{r Stan_Diagnostic_Plots, eval = params$run_stan, fig.width = 11.69, fig.height = 8.27}
+```{r Stan_Diagnostic_Plots, eval = params$run_stan_plots, fig.width = 11.69, fig.height = 8.27}
 ### MCMC diagnostics plots saved to hierarchical bayes folder from the second chunk
+# Ulpoading saved .rds results
+if (!exists("fit_hier")) {
+  stan_plot_inputs_file <- file.path("Results", dataset_name, "Genotypes_results", run_names$bayes_run_name, "stan_plot_inputs.rds")
+  stopifnot("no saved Stan run with these settings, run the Stan model first" = file.exists(stan_plot_inputs_file))
+  list2env(readRDS(stan_plot_inputs_file), envir = environment())
+}
 
-stan_diagnostics_folder <- file.path("Results", dataset_name, "Graphics", run_names$bayes_run_name, "Stan_Diagnostics_Plots")
+stan_diagnostics_folder <- file.path(stan_graphics_folder, "Stan_Diagnostics_Plots")
 dir.create(stan_diagnostics_folder, showWarnings = FALSE, recursive = TRUE)
 
 color_scheme_set(c("#D9AF6B", "#F1E4DB", "#467378", "#9AA582", "#AF6458", "#657359")) 

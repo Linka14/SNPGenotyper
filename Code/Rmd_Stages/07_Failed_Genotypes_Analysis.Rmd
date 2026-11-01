@@ -42,6 +42,8 @@ params:
   prior_het_share: 0.15
   prior_population: "FreqWOLF_all"
   prior_floor: 0.001
+  ancestry_prior_shape: 1 # for "ancestry"
+  phi_hom_structure: "shared" # "shared", "locus", "sample" or "locus_sample",
 
   # This stage
   failed_genotypes_source: "bayes_genotypes" # "bayes_genotypes" or "asp_genotypes": whose genotype calls are compared with the reference
@@ -89,7 +91,8 @@ timing_log <- list()
 
 # Folder names are built with a shared function inside asp_functions.R, it gives a unique name based on changed settings for every run. If you use the same settings to rerun it again it gets overwritten. 
 run_names <- build_run_names(input_type, use_anchors, anchor_length, threshold_type, error_rate, min_score_fraction,
-                             prior_type, prior_het_share, prior_population, prior_floor)
+                             prior_type, prior_het_share, prior_population, prior_floor,
+                             ancestry_prior_shape = ancestry_prior_shape, phi_hom_structure = phi_hom_structure)
 genotypes_dir <- file.path("Results", dataset_name, "Genotypes_results")
 failed_genotypes_path <- switch(failed_genotypes_source,
                                 asp_genotypes = file.path(genotypes_dir, run_names$asp_run_name, "all_barcodes_asp_genotypes.tsv"),
@@ -103,8 +106,8 @@ for (needed_file in c(failed_genotypes_path, failed_reads_path, reference_genoty
 }
 
 # Output folders
-failed_run_label <- basename(dirname(failed_genotypes_path))
-out_dir_failed <- file.path("Results", dataset_name, "Graphics/Failed_genotypes_analysis", failed_run_label)
+failed_run_label <- if (failed_genotypes_source == "asp_genotypes") run_names$asp_run_name else run_names$bayes_run_name 
+out_dir_failed <- file.path("Results", dataset_name, "Graphics/Failed_Genotypes_Analysis", failed_run_label)
 dir.create(out_dir_failed, showWarnings = FALSE, recursive = TRUE)
 
 # Same primer panel preparation as in the ASP genotype pipeline

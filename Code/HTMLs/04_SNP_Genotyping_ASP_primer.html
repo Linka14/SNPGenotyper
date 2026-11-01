@@ -10,7 +10,7 @@
 
 
 
-<meta name="date" content="2026-10-29" />
+<meta name="date" content="2026-10-31" />
 
 <title>Stage 04: ASP Genotyping Pipeline</title>
 
@@ -3250,7 +3250,7 @@ border-radius: 0px;
 
 <h1 class="title toc-ignore">Stage 04: ASP Genotyping Pipeline</h1>
 <h3 class="subtitle">Dataset: big - 24 barcodes</h3>
-<h4 class="date">29 October 2026</h4>
+<h4 class="date">31 October 2026</h4>
 
 </div>
 
@@ -3324,7 +3324,7 @@ Settings used for this run
 <tbody>
 <tr class="odd">
 <td align="left">run_date</td>
-<td align="left">2026-10-29 15:51</td>
+<td align="left">2026-10-31 16:17</td>
 </tr>
 <tr class="even">
 <td align="left">dataset_name</td>
@@ -3858,31 +3858,31 @@ SNP reads and timing log for speed comparison).</p>
 <span id="cb5-311"><a href="#cb5-311" tabindex="-1"></a>} </span>
 <span id="cb5-312"><a href="#cb5-312" tabindex="-1"></a></span>
 <span id="cb5-313"><a href="#cb5-313" tabindex="-1"></a><span class="fu">log_time</span>(<span class="st">&quot;TOTAL PIPELINE&quot;</span>, pipeline_start_time)</span></code></pre></div>
-<pre class="scroll-output"><code>[TIMING] read barcode 01 (W211213): 3.32 sec
-[TIMING] read barcode 02 (W211224): 4.45 sec
-[TIMING] read barcode 03 (W211233): 8.32 sec
-[TIMING] read barcode 04 (W211255): 3.16 sec
-[TIMING] read barcode 05 (W211287): 4.88 sec
-[TIMING] read barcode 06 (W211293): 5.00 sec
-[TIMING] read barcode 07 (W215154): 3.38 sec
-[TIMING] read barcode 08 (W215207.r1): 5.50 sec
-[TIMING] read barcode 09 (W215208.r1): 7.60 sec
-[TIMING] read barcode 10 (W215210.r1): 3.87 sec
+<pre class="scroll-output"><code>[TIMING] read barcode 01 (W211213): 3.35 sec
+[TIMING] read barcode 02 (W211224): 4.43 sec
+[TIMING] read barcode 03 (W211233): 8.33 sec
+[TIMING] read barcode 04 (W211255): 3.18 sec
+[TIMING] read barcode 05 (W211287): 4.91 sec
+[TIMING] read barcode 06 (W211293): 4.99 sec
+[TIMING] read barcode 07 (W215154): 3.39 sec
+[TIMING] read barcode 08 (W215207.r1): 5.52 sec
+[TIMING] read barcode 09 (W215208.r1): 7.61 sec
+[TIMING] read barcode 10 (W215210.r1): 3.88 sec
 [TIMING] read barcode 11 (W215214): 7.61 sec
-[TIMING] read barcode 12 (W215214.r1): 3.57 sec
+[TIMING] read barcode 12 (W215214.r1): 3.58 sec
 [TIMING] read barcode 13 (W215217): 4.27 sec
 [TIMING] read barcode 14 (W215220): 4.11 sec
-[TIMING] read barcode 15 (W215220.r1): 2.90 sec
-[TIMING] read barcode 16 (W215222): 3.25 sec
-[TIMING] read barcode 17 (W215222.r1): 7.30 sec
-[TIMING] read barcode 18 (W215231): 2.84 sec
-[TIMING] read barcode 19 (W215232): 4.03 sec
-[TIMING] read barcode 20 (W215273): 3.23 sec
+[TIMING] read barcode 15 (W215220.r1): 2.89 sec
+[TIMING] read barcode 16 (W215222): 3.26 sec
+[TIMING] read barcode 17 (W215222.r1): 7.31 sec
+[TIMING] read barcode 18 (W215231): 2.85 sec
+[TIMING] read barcode 19 (W215232): 4.07 sec
+[TIMING] read barcode 20 (W215273): 3.29 sec
 [TIMING] read barcode 21 (W215294): 2.78 sec
-[TIMING] read barcode 22 (W215511): 5.19 sec
+[TIMING] read barcode 22 (W215511): 5.21 sec
 [TIMING] read barcode 23 (W215538): 4.11 sec
-[TIMING] read barcode 24 (W215539.r1): 2.39 sec
-[TIMING] Part 1 total: read + tag 24 barcodes (779819 reads): 107.87 sec
+[TIMING] read barcode 24 (W215539.r1): 2.38 sec
+[TIMING] Part 1 total: read + tag 24 barcodes (779819 reads): 108.17 sec
 
 [PART 2] Starting: 33 loci, 779819 reads total, 4 cores (mc.preschedule = FALSE)
 [PART 2] Largest loci (dispatched roughly in this order, workers self-balance the rest):
@@ -3893,7 +3893,7 @@ SNP reads and timing log for speed comparison).</p>
     BICF2G630409723 (44529 reads)
 [PART 2] ... and 28 more loci
 
-[TIMING] Part 2 total: score 33 loci (779819 rows): 16.08 sec
+[TIMING] Part 2 total: score 33 loci (779819 rows): 15.84 sec
 
 [PART 2] Done: 779819 reads scored across 33 loci
 [PART 2] Called an allele: 530648 (68.0%) | NA (failed threshold/SNP checks): 249171 (32.0%)
@@ -3902,8 +3902,8 @@ SNP reads and timing log for speed comparison).</p>
 [PART 3] Starting genotype calling...
 
 [PART 3] Strand check: 90 heterozygous calls passed, 0 failed (flagged only; a direction needs &gt;= 8 reads to be judged)
-[TIMING] Part 3 total: genotype calling: 2.52 sec
-[TIMING] TOTAL PIPELINE: 127.36 sec</code></pre>
+[TIMING] Part 3 total: genotype calling: 2.47 sec
+[TIMING] TOTAL PIPELINE: 127.69 sec</code></pre>
 </div>
 <div id="genotyping-summary" class="section level2" number="6">
 <h2><span class="header-section-number">6</span> Genotyping Summary</h2>
@@ -4078,13 +4078,11 @@ survived the SNP checks and filters and which reads were removed</p>
 </tr>
 </tbody>
 </table>
-<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a><span class="fu">readLines</span>(<span class="st">&quot;Data/Processed_data/big/Demultiplexed_sequence_data/Identified_sample_sequences_Obi4/barcode01_identified.fastq&quot;</span>, <span class="at">n =</span> <span class="dv">1</span>)</span></code></pre></div>
-<pre><code>[1] &quot;@0f7a0443-3fc2-4908-b219-c1da69534048_sub[245..274] {\&quot;definition\&quot;:\&quot;qs:f:14.4527\\tch:i:48\\tst:Z:2026-02-20T13:27:51.326+00:00\\tRG:Z:eee65f53e9421ce50211670eae679f02e8d28a79_dna_r10.4.1_e8.2_400bps_sup@v5.0.0_SQK-NBD114-24_barcode01\\tPU:Z:FAX72901\\tPU:Z:FAX72901\\tDT:Z:1970-01-01T00:00:00.000000+00:00\\tSM:Z:barcode01\\tal:Z:barcode01\\ttm:Z:none\&quot;,\&quot;experiment\&quot;:\&quot;BICF2G630409723\&quot;,\&quot;obimultiplex_amplicon_rank\&quot;:\&quot;1/2\&quot;,\&quot;obimultiplex_direction\&quot;:\&quot;reverse\&quot;,\&quot;obimultiplex_forward_error\&quot;:1,\&quot;obimultiplex_forward_match\&quot;:\&quot;gtttaccattggccatgttcactat\&quot;,\&quot;obimultiplex_forward_matching\&quot;:\&quot;indel\&quot;,\&quot;obimultiplex_forward_primer\&quot;:\&quot;gtttaccatggccatgttcactat\&quot;,\&quot;obimultiplex_forward_proposed_tag\&quot;:\&quot;aacaact\&quot;,\&quot;obimultiplex_forward_tag\&quot;:\&quot;aacaact\&quot;,\&quot;obimultiplex_forward_tag_dist\&quot;:0,\&quot;obimultiplex_reverse_error\&quot;:1,\&quot;obimultiplex_reverse_match\&quot;:\&quot;agtcccaaacccaggttaggca\&quot;,\&quot;obimultiplex_reverse_matching\&quot;:\&quot;indel\&quot;,\&quot;obimultiplex_reverse_primer\&quot;:\&quot;agtccaaacccaggttaggca\&quot;,\&quot;obimultiplex_reverse_proposed_tag\&quot;:\&quot;aacaact\&quot;,\&quot;obimultiplex_reverse_tag\&quot;:\&quot;aacaact\&quot;,\&quot;obimultiplex_reverse_tag_dist\&quot;:0,\&quot;sample\&quot;:\&quot;sample\&quot;}&quot;</code></pre>
 </div>
 <div id="timing-summary" class="section level2" number="8">
 <h2><span class="header-section-number">8</span> Timing Summary</h2>
-<div class="sourceCode" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" tabindex="-1"></a>timing_summary <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(timing_log)</span>
-<span id="cb16-2"><a href="#cb16-2" tabindex="-1"></a><span class="fu">kable</span>(timing_summary <span class="sc">%&gt;%</span> <span class="fu">filter</span>(<span class="fu">grepl</span>(<span class="st">&quot;^Part|^TOTAL&quot;</span>, step)), <span class="at">row.names =</span> <span class="cn">FALSE</span>, <span class="at">col.names =</span> <span class="fu">c</span>(<span class="st">&quot;Step&quot;</span>, <span class="st">&quot;Seconds&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a>timing_summary <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(timing_log)</span>
+<span id="cb14-2"><a href="#cb14-2" tabindex="-1"></a><span class="fu">kable</span>(timing_summary <span class="sc">%&gt;%</span> <span class="fu">filter</span>(<span class="fu">grepl</span>(<span class="st">&quot;^Part|^TOTAL&quot;</span>, step)), <span class="at">row.names =</span> <span class="cn">FALSE</span>, <span class="at">col.names =</span> <span class="fu">c</span>(<span class="st">&quot;Step&quot;</span>, <span class="st">&quot;Seconds&quot;</span>))</span></code></pre></div>
 <table>
 <thead>
 <tr class="header">
@@ -4096,24 +4094,24 @@ survived the SNP checks and filters and which reads were removed</p>
 <tr class="odd">
 <td align="left">Part 1 total: read + tag 24 barcodes (779819
 reads)</td>
-<td align="right">107.866403</td>
+<td align="right">108.167781</td>
 </tr>
 <tr class="even">
 <td align="left">Part 2 total: score 33 loci (779819 rows)</td>
-<td align="right">16.075677</td>
+<td align="right">15.839184</td>
 </tr>
 <tr class="odd">
 <td align="left">Part 3 total: genotype calling</td>
-<td align="right">2.523129</td>
+<td align="right">2.467191</td>
 </tr>
 <tr class="even">
 <td align="left">TOTAL PIPELINE</td>
-<td align="right">127.360311</td>
+<td align="right">127.687764</td>
 </tr>
 </tbody>
 </table>
-<div class="sourceCode" id="cb17"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" tabindex="-1"></a><span class="co"># Every step per sample and barcode</span></span>
-<span id="cb17-2"><a href="#cb17-2" tabindex="-1"></a><span class="fu">write_tsv</span>(timing_summary, <span class="fu">file.path</span>(output_folder_name_identified, <span class="st">&quot;timing_log_04.tsv&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a><span class="co"># Every step per sample and barcode</span></span>
+<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a><span class="fu">write_tsv</span>(timing_summary, <span class="fu">file.path</span>(output_folder_name_identified, <span class="st">&quot;timing_log_04.tsv&quot;</span>))</span></code></pre></div>
 </div>
 <div id="reproducibility" class="section level2" number="9">
 <h2><span class="header-section-number">9</span> Reproducibility</h2>
@@ -4121,7 +4119,7 @@ reads)</td>
 <summary>
 Session info and tool versions
 </summary>
-<div class="sourceCode" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" tabindex="-1"></a><span class="fu">sessionInfo</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" tabindex="-1"></a><span class="fu">sessionInfo</span>()</span></code></pre></div>
 <pre><code>R version 4.5.2 (2025-10-31)
 Platform: aarch64-apple-darwin20
 Running under: macOS Sequoia 15.6.1
