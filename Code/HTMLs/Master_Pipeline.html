@@ -10,7 +10,7 @@
 
 
 
-<meta name="date" content="2026-11-02" />
+<meta name="date" content="2026-11-03" />
 
 <title>Master pipeline</title>
 
@@ -3249,11 +3249,16 @@ border-radius: 0px;
 
 
 <h1 class="title toc-ignore">Master pipeline</h1>
-<h4 class="date">02 November 2026</h4>
+<h4 class="date">03 November 2026</h4>
 
 </div>
 
 
+<style type="text/css">
+pre, pre code { white-space: pre-wrap; word-break: break-word; }
+.scroll-output { max-height: 250px; overflow-y: auto; }
+p, li { text-align: justify; hyphens: auto; }
+</style>
 <div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">suppressMessages</span>({</span>
 <span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a>  <span class="fu">library</span>(dplyr)</span>
 <span id="cb1-3"><a href="#cb1-3" tabindex="-1"></a>  <span class="fu">library</span>(rstudioapi)</span>
@@ -3275,7 +3280,7 @@ border-radius: 0px;
 <span id="cb2-15"><a href="#cb2-15" tabindex="-1"></a><span class="co">#Launching</span></span>
 <span id="cb2-16"><a href="#cb2-16" tabindex="-1"></a><span class="fu">jobRunScript</span>(master_job_script, <span class="at">workingDir =</span> project_folder, <span class="at">importEnv =</span> <span class="cn">FALSE</span>) <span class="co">#background job starts inside the Full_workflow so all paths are correct, rendering start completely clean with no current session objects, runs the temporary file created before. its skips the launcher chunk (eval=F) and each runs_stage() starts processing a stage</span></span></code></pre></div>
 <div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="co"># packages the stages need, checked before any stage starts so a missing one fails immediately</span></span>
-<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>required_packages <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">&quot;ggplot2&quot;</span>, <span class="st">&quot;patchwork&quot;</span>, <span class="st">&quot;dplyr&quot;</span>, <span class="st">&quot;tidyverse&quot;</span>,<span class="st">&quot;readr&quot;</span>, <span class="st">&quot;jsonlite&quot;</span>, <span class="st">&quot;scales&quot;</span>, <span class="st">&quot;readxl&quot;</span>, <span class="st">&quot;Biostrings&quot;</span>, <span class="st">&quot;pwalign&quot;</span>, <span class="st">&quot;parallel&quot;</span>, <span class="st">&quot;rstan&quot;</span>, <span class="st">&quot;lme4&quot;</span>, <span class="st">&quot;grid&quot;</span>)</span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>required_packages <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">&quot;ggplot2&quot;</span>, <span class="st">&quot;patchwork&quot;</span>, <span class="st">&quot;dplyr&quot;</span>, <span class="st">&quot;tidyverse&quot;</span>,<span class="st">&quot;readr&quot;</span>, <span class="st">&quot;jsonlite&quot;</span>, <span class="st">&quot;scales&quot;</span>, <span class="st">&quot;readxl&quot;</span>, <span class="st">&quot;Biostrings&quot;</span>, <span class="st">&quot;pwalign&quot;</span>, <span class="st">&quot;parallel&quot;</span>, <span class="st">&quot;rstan&quot;</span>, <span class="st">&quot;lme4&quot;</span>, <span class="st">&quot;grid&quot;</span>, <span class="st">&quot;adegenet&quot;</span>)</span>
 <span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a>missing_packages <span class="ot">&lt;-</span> required_packages[<span class="sc">!</span><span class="fu">vapply</span>(required_packages, requireNamespace, <span class="fu">logical</span>(<span class="dv">1</span>), <span class="at">quietly =</span> <span class="cn">TRUE</span>)]</span>
 <span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a><span class="cf">if</span> (<span class="fu">length</span>(missing_packages) <span class="sc">&gt;</span> <span class="dv">0</span>) <span class="fu">stop</span>(<span class="st">&quot;Install these packages first: &quot;</span>, <span class="fu">paste</span>(missing_packages, <span class="at">collapse =</span> <span class="st">&quot;, &quot;</span>))</span></code></pre></div>
 <div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="co"># Here you can choose which stages to run: TRUE = run, FALSE = skip (if you dont want to run obimultiplexing again for example)</span></span>
@@ -3283,32 +3288,33 @@ border-radius: 0px;
 <span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a>run_02_obitools_summaries <span class="ot">&lt;-</span> <span class="cn">FALSE</span></span>
 <span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a>run_03_minimap2 <span class="ot">&lt;-</span> <span class="cn">FALSE</span></span>
 <span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>run_04_genotyping <span class="ot">&lt;-</span> <span class="cn">FALSE</span></span>
-<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a>run_05_bayesian <span class="ot">&lt;-</span><span class="cn">TRUE</span></span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a>run_05_bayesian <span class="ot">&lt;-</span><span class="cn">FALSE</span></span>
 <span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a>run_06_visualization <span class="ot">&lt;-</span> <span class="cn">FALSE</span></span>
 <span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a>run_07_failed_genotypes <span class="ot">&lt;-</span> <span class="cn">FALSE</span></span>
-<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a></span>
-<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a><span class="co"># Knits one stage Rmd with its settings in a fresh R process (Rscript), prints the progress in the Background Jobs pane, stops the pipeline if the stage fails, and returns how long it took.</span></span>
-<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a>run_stage <span class="ot">&lt;-</span> <span class="cf">function</span>(stage_rmd, <span class="at">stage_settings =</span> <span class="fu">list</span>(), run) { <span class="co">#takes which rmd to run, its settings and whether to run it or not</span></span>
-<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a>  <span class="cf">if</span> (<span class="sc">!</span>run) {</span>
-<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a>    <span class="fu">message</span>(<span class="st">&quot;SKIPPED: &quot;</span>, stage_rmd) <span class="co">#skips all FALSE stages</span></span>
-<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a>    <span class="fu">return</span>(<span class="cn">NULL</span>)</span>
-<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a>  }</span>
-<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a>  stage_settings_file <span class="ot">&lt;-</span> <span class="fu">tempfile</span>(<span class="at">fileext =</span> <span class="st">&quot;.rds&quot;</span>) <span class="co">#creates a temporary .rds file with stage settings (you have to pass it as text)</span></span>
-<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a>  <span class="fu">saveRDS</span>(stage_settings, stage_settings_file)</span>
-<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a>  </span>
-<span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a>  stage_start <span class="ot">&lt;-</span> <span class="fu">Sys.time</span>() <span class="co">#timings and banners</span></span>
-<span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a>  <span class="fu">message</span>(<span class="st">&quot;STARTED: &quot;</span>, stage_rmd, <span class="st">&quot; at &quot;</span>, <span class="fu">format</span>(stage_start, <span class="st">&quot;%H:%M&quot;</span>))</span>
-<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a>  </span>
-<span id="cb4-22"><a href="#cb4-22" tabindex="-1"></a>  <span class="co">#runs a specific Rscript render_stage.R and tells which .Rmd with which settings to run. the Rscript keeps only the settings the YAML header for each stage needs and knits it to HTML (exits with failed (1) or success (0)).</span></span>
-<span id="cb4-23"><a href="#cb4-23" tabindex="-1"></a>  stage_exit_status <span class="ot">&lt;-</span> <span class="fu">system2</span>(<span class="fu">file.path</span>(<span class="fu">R.home</span>(<span class="st">&quot;bin&quot;</span>), <span class="st">&quot;Rscript&quot;</span>), </span>
-<span id="cb4-24"><a href="#cb4-24" tabindex="-1"></a>    <span class="fu">c</span>(<span class="st">&quot;Code/R_scripts/render_stage.R&quot;</span>, <span class="fu">shQuote</span>(stage_rmd), <span class="fu">shQuote</span>(stage_settings_file)),</span>
-<span id="cb4-25"><a href="#cb4-25" tabindex="-1"></a>    <span class="at">stdout =</span> <span class="st">&quot;&quot;</span>, <span class="at">stderr =</span> <span class="st">&quot;&quot;</span>) <span class="co">#sends output to the pane</span></span>
-<span id="cb4-26"><a href="#cb4-26" tabindex="-1"></a>  </span>
-<span id="cb4-27"><a href="#cb4-27" tabindex="-1"></a>  <span class="cf">if</span> (stage_exit_status <span class="sc">!=</span> <span class="dv">0</span>) <span class="fu">stop</span>(<span class="st">&quot;Stage failed: &quot;</span>, stage_rmd, <span class="st">&quot; (see the output above)&quot;</span>) <span class="co">#if exit status is not 0 it stops every later stage</span></span>
-<span id="cb4-28"><a href="#cb4-28" tabindex="-1"></a>  stage_minutes <span class="ot">&lt;-</span> <span class="fu">round</span>(<span class="fu">as.numeric</span>(<span class="fu">Sys.time</span>() <span class="sc">-</span> stage_start, <span class="at">units =</span> <span class="st">&quot;mins&quot;</span>), <span class="dv">1</span>)</span>
-<span id="cb4-29"><a href="#cb4-29" tabindex="-1"></a>  <span class="fu">message</span>(<span class="st">&quot;FINISHED: &quot;</span>, stage_rmd, <span class="st">&quot; in &quot;</span>, stage_minutes, <span class="st">&quot; min&quot;</span>)</span>
-<span id="cb4-30"><a href="#cb4-30" tabindex="-1"></a>  <span class="fu">data.frame</span>(<span class="at">stage =</span> <span class="fu">basename</span>(stage_rmd), <span class="at">minutes =</span> stage_minutes)</span>
-<span id="cb4-31"><a href="#cb4-31" tabindex="-1"></a>}</span></code></pre></div>
+<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a>run_08_ancestry_validation <span class="ot">&lt;-</span> <span class="cn">TRUE</span></span>
+<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a></span>
+<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="co"># Knits one stage Rmd with its settings in a fresh R process (Rscript), prints the progress in the Background Jobs pane, stops the pipeline if the stage fails, and returns how long it took.</span></span>
+<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a>run_stage <span class="ot">&lt;-</span> <span class="cf">function</span>(stage_rmd, <span class="at">stage_settings =</span> <span class="fu">list</span>(), run) { <span class="co">#takes which rmd to run, its settings and whether to run it or not</span></span>
+<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a>  <span class="cf">if</span> (<span class="sc">!</span>run) {</span>
+<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a>    <span class="fu">message</span>(<span class="st">&quot;SKIPPED: &quot;</span>, stage_rmd) <span class="co">#skips all FALSE stages</span></span>
+<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a>    <span class="fu">return</span>(<span class="cn">NULL</span>)</span>
+<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a>  }</span>
+<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a>  stage_settings_file <span class="ot">&lt;-</span> <span class="fu">tempfile</span>(<span class="at">fileext =</span> <span class="st">&quot;.rds&quot;</span>) <span class="co">#creates a temporary .rds file with stage settings (you have to pass it as text)</span></span>
+<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a>  <span class="fu">saveRDS</span>(stage_settings, stage_settings_file)</span>
+<span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a>  </span>
+<span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a>  stage_start <span class="ot">&lt;-</span> <span class="fu">Sys.time</span>() <span class="co">#timings and banners</span></span>
+<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a>  <span class="fu">message</span>(<span class="st">&quot;STARTED: &quot;</span>, stage_rmd, <span class="st">&quot; at &quot;</span>, <span class="fu">format</span>(stage_start, <span class="st">&quot;%H:%M&quot;</span>))</span>
+<span id="cb4-22"><a href="#cb4-22" tabindex="-1"></a>  </span>
+<span id="cb4-23"><a href="#cb4-23" tabindex="-1"></a>  <span class="co">#runs a specific Rscript render_stage.R and tells which .Rmd with which settings to run. the Rscript keeps only the settings the YAML header for each stage needs and knits it to HTML (exits with failed (1) or success (0)).</span></span>
+<span id="cb4-24"><a href="#cb4-24" tabindex="-1"></a>  stage_exit_status <span class="ot">&lt;-</span> <span class="fu">system2</span>(<span class="fu">file.path</span>(<span class="fu">R.home</span>(<span class="st">&quot;bin&quot;</span>), <span class="st">&quot;Rscript&quot;</span>), </span>
+<span id="cb4-25"><a href="#cb4-25" tabindex="-1"></a>    <span class="fu">c</span>(<span class="st">&quot;Code/R_scripts/render_stage.R&quot;</span>, <span class="fu">shQuote</span>(stage_rmd), <span class="fu">shQuote</span>(stage_settings_file)),</span>
+<span id="cb4-26"><a href="#cb4-26" tabindex="-1"></a>    <span class="at">stdout =</span> <span class="st">&quot;&quot;</span>, <span class="at">stderr =</span> <span class="st">&quot;&quot;</span>) <span class="co">#sends output to the pane</span></span>
+<span id="cb4-27"><a href="#cb4-27" tabindex="-1"></a>  </span>
+<span id="cb4-28"><a href="#cb4-28" tabindex="-1"></a>  <span class="cf">if</span> (stage_exit_status <span class="sc">!=</span> <span class="dv">0</span>) <span class="fu">stop</span>(<span class="st">&quot;Stage failed: &quot;</span>, stage_rmd, <span class="st">&quot; (see the output above)&quot;</span>) <span class="co">#if exit status is not 0 it stops every later stage</span></span>
+<span id="cb4-29"><a href="#cb4-29" tabindex="-1"></a>  stage_minutes <span class="ot">&lt;-</span> <span class="fu">round</span>(<span class="fu">as.numeric</span>(<span class="fu">Sys.time</span>() <span class="sc">-</span> stage_start, <span class="at">units =</span> <span class="st">&quot;mins&quot;</span>), <span class="dv">1</span>)</span>
+<span id="cb4-30"><a href="#cb4-30" tabindex="-1"></a>  <span class="fu">message</span>(<span class="st">&quot;FINISHED: &quot;</span>, stage_rmd, <span class="st">&quot; in &quot;</span>, stage_minutes, <span class="st">&quot; min&quot;</span>)</span>
+<span id="cb4-31"><a href="#cb4-31" tabindex="-1"></a>  <span class="fu">data.frame</span>(<span class="at">stage =</span> <span class="fu">basename</span>(stage_rmd), <span class="at">minutes =</span> stage_minutes)</span>
+<span id="cb4-32"><a href="#cb4-32" tabindex="-1"></a>}</span></code></pre></div>
 <div id="shared-settings" class="section level2">
 <h2>Shared settings</h2>
 <p>Used by several stages, set once here. Each stage only takes the ones
@@ -3435,39 +3441,57 @@ settings.</p>
 <span id="cb17-27"><a href="#cb17-27" tabindex="-1"></a>)</span></code></pre></div>
 <div class="sourceCode" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" tabindex="-1"></a>timing_stage_05 <span class="ot">&lt;-</span> <span class="fu">run_stage</span>(<span class="st">&quot;Code/Rmd_Stages/05_SNP_Bayesian_Genotyping.Rmd&quot;</span>,</span>
 <span id="cb18-2"><a href="#cb18-2" tabindex="-1"></a>  <span class="fu">c</span>(shared_settings, settings_05_bayesian), <span class="at">run =</span> run_05_bayesian)</span></code></pre></div>
-<pre><code>STARTED: Code/Rmd_Stages/05_SNP_Bayesian_Genotyping.Rmd at 15:19</code></pre>
-<pre><code>FINISHED: Code/Rmd_Stages/05_SNP_Bayesian_Genotyping.Rmd in 0.7 min</code></pre>
+<pre><code>SKIPPED: Code/Rmd_Stages/05_SNP_Bayesian_Genotyping.Rmd</code></pre>
 </div>
 <div id="stage-6-visualization-and-data-analysis" class="section level2">
 <h2>Stage 6: Visualization and data analysis</h2>
-<div class="sourceCode" id="cb21"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" tabindex="-1"></a>settings_06_visualization <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
-<span id="cb21-2"><a href="#cb21-2" tabindex="-1"></a>  <span class="at">run_basic_plots =</span> <span class="cn">TRUE</span>,</span>
-<span id="cb21-3"><a href="#cb21-3" tabindex="-1"></a>  <span class="at">run_filtration_parameters =</span> <span class="cn">TRUE</span>,</span>
-<span id="cb21-4"><a href="#cb21-4" tabindex="-1"></a>  <span class="at">run_speedopt_diagnosis =</span> <span class="cn">TRUE</span>,</span>
-<span id="cb21-5"><a href="#cb21-5" tabindex="-1"></a>  <span class="at">run_filtration_vis =</span> <span class="cn">TRUE</span></span>
-<span id="cb21-6"><a href="#cb21-6" tabindex="-1"></a>)</span></code></pre></div>
-<div class="sourceCode" id="cb22"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb22-1"><a href="#cb22-1" tabindex="-1"></a>timing_stage_06 <span class="ot">&lt;-</span> <span class="fu">run_stage</span>(<span class="st">&quot;Code/Rmd_Stages/06_Visualisation_of_Genotyping_Results.Rmd&quot;</span>,</span>
-<span id="cb22-2"><a href="#cb22-2" tabindex="-1"></a>  <span class="fu">c</span>(shared_settings, settings_01_demultiplexing, settings_04_genotyping, settings_05_bayesian, settings_06_visualization),</span>
-<span id="cb22-3"><a href="#cb22-3" tabindex="-1"></a>  <span class="at">run =</span> run_06_visualization)</span></code></pre></div>
+<div class="sourceCode" id="cb20"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" tabindex="-1"></a>settings_06_visualization <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb20-2"><a href="#cb20-2" tabindex="-1"></a>  <span class="at">run_basic_plots =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb20-3"><a href="#cb20-3" tabindex="-1"></a>  <span class="at">run_filtration_parameters =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb20-4"><a href="#cb20-4" tabindex="-1"></a>  <span class="at">run_speedopt_diagnosis =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb20-5"><a href="#cb20-5" tabindex="-1"></a>  <span class="at">run_filtration_vis =</span> <span class="cn">TRUE</span></span>
+<span id="cb20-6"><a href="#cb20-6" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb21"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" tabindex="-1"></a>timing_stage_06 <span class="ot">&lt;-</span> <span class="fu">run_stage</span>(<span class="st">&quot;Code/Rmd_Stages/06_Visualisation_of_Genotyping_Results.Rmd&quot;</span>,</span>
+<span id="cb21-2"><a href="#cb21-2" tabindex="-1"></a>  <span class="fu">c</span>(shared_settings, settings_01_demultiplexing, settings_04_genotyping, settings_05_bayesian, settings_06_visualization),</span>
+<span id="cb21-3"><a href="#cb21-3" tabindex="-1"></a>  <span class="at">run =</span> run_06_visualization)</span></code></pre></div>
 <pre><code>SKIPPED: Code/Rmd_Stages/06_Visualisation_of_Genotyping_Results.Rmd</code></pre>
 </div>
 <div id="stage-7-failed-genotypes-analysis" class="section level2">
 <h2>Stage 7: Failed Genotypes Analysis</h2>
-<div class="sourceCode" id="cb24"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb24-1"><a href="#cb24-1" tabindex="-1"></a>settings_07_failed_genotypes <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
-<span id="cb24-2"><a href="#cb24-2" tabindex="-1"></a>  <span class="at">failed_genotypes_source =</span> <span class="st">&quot;asp_genotypes&quot;</span>, <span class="co"># &quot;bayes_genotypes&quot; or &quot;asp_genotypes&quot;, which genotype calls are compared with the reference</span></span>
-<span id="cb24-3"><a href="#cb24-3" tabindex="-1"></a>  <span class="at">failed_max_reads_plotted =</span> <span class="dv">20</span> <span class="co"># reads drawn per plot, the .tsv table keeps every read</span></span>
-<span id="cb24-4"><a href="#cb24-4" tabindex="-1"></a>)</span></code></pre></div>
-<div class="sourceCode" id="cb25"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb25-1"><a href="#cb25-1" tabindex="-1"></a>timing_stage_07 <span class="ot">&lt;-</span> <span class="fu">run_stage</span>(<span class="st">&quot;Code/Rmd_Stages/07_Failed_genotypes_analysis.Rmd&quot;</span>,</span>
-<span id="cb25-2"><a href="#cb25-2" tabindex="-1"></a>  <span class="fu">c</span>(shared_settings, settings_05_bayesian, settings_07_failed_genotypes), <span class="at">run =</span> run_07_failed_genotypes)</span></code></pre></div>
+<div class="sourceCode" id="cb23"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb23-1"><a href="#cb23-1" tabindex="-1"></a>settings_07_failed_genotypes <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb23-2"><a href="#cb23-2" tabindex="-1"></a>  <span class="at">failed_genotypes_source =</span> <span class="st">&quot;asp_genotypes&quot;</span>, <span class="co"># &quot;bayes_genotypes&quot; or &quot;asp_genotypes&quot;, which genotype calls are compared with the reference</span></span>
+<span id="cb23-3"><a href="#cb23-3" tabindex="-1"></a>  <span class="at">failed_max_reads_plotted =</span> <span class="dv">20</span> <span class="co"># reads drawn per plot, the .tsv table keeps every read</span></span>
+<span id="cb23-4"><a href="#cb23-4" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb24"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb24-1"><a href="#cb24-1" tabindex="-1"></a>timing_stage_07 <span class="ot">&lt;-</span> <span class="fu">run_stage</span>(<span class="st">&quot;Code/Rmd_Stages/07_Failed_genotypes_analysis.Rmd&quot;</span>,</span>
+<span id="cb24-2"><a href="#cb24-2" tabindex="-1"></a>  <span class="fu">c</span>(shared_settings, settings_05_bayesian, settings_07_failed_genotypes), <span class="at">run =</span> run_07_failed_genotypes)</span></code></pre></div>
 <pre><code>SKIPPED: Code/Rmd_Stages/07_Failed_genotypes_analysis.Rmd</code></pre>
+</div>
+<div id="stage-8-ancestry-validation-pca-and-dapc" class="section level2">
+<h2>Stage 8: Ancestry validation (PCA and DAPC)</h2>
+<div class="sourceCode" id="cb26"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb26-1"><a href="#cb26-1" tabindex="-1"></a>settings_08_ancestry_validation <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb26-2"><a href="#cb26-2" tabindex="-1"></a>  <span class="at">genotype_prior_type =</span> <span class="st">&quot;flat&quot;</span>, <span class="co"># prior should be flat not ancestry (circularity, using ancestry priors for genotype call them using same genotypes for ancestry validation)</span></span>
+<span id="cb26-3"><a href="#cb26-3" tabindex="-1"></a>  <span class="at">gq_cutoff =</span> <span class="dv">20</span>, <span class="co"># Cutoff for genotypes, I could use 25 as previously calculated in the genotypes cutoff plot</span></span>
+<span id="cb26-4"><a href="#cb26-4" tabindex="-1"></a></span>
+<span id="cb26-5"><a href="#cb26-5" tabindex="-1"></a>  <span class="co"># Simulated reference animals from the primer panel with allele frequencies</span></span>
+<span id="cb26-6"><a href="#cb26-6" tabindex="-1"></a>  <span class="at">wolf_frequency_column =</span> <span class="st">&quot;FreqWOLF_all&quot;</span>, <span class="co"># FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT or FreqWOLF_IB</span></span>
+<span id="cb26-7"><a href="#cb26-7" tabindex="-1"></a>  <span class="at">dog_frequency_column =</span> <span class="st">&quot;FreqDOG&quot;</span>,</span>
+<span id="cb26-8"><a href="#cb26-8" tabindex="-1"></a>  <span class="at">n_reference_wolves =</span> <span class="dv">300</span>,</span>
+<span id="cb26-9"><a href="#cb26-9" tabindex="-1"></a>  <span class="at">n_reference_dogs =</span> <span class="dv">300</span>,</span>
+<span id="cb26-10"><a href="#cb26-10" tabindex="-1"></a>  <span class="at">n_simulated_per_hybrid_class =</span> <span class="dv">50</span>, <span class="co"># for F1, first and second backcrosses</span></span>
+<span id="cb26-11"><a href="#cb26-11" tabindex="-1"></a>  <span class="at">simulation_seed =</span> <span class="dv">1</span></span>
+<span id="cb26-12"><a href="#cb26-12" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb27"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" tabindex="-1"></a>timing_stage_08 <span class="ot">&lt;-</span> <span class="fu">run_stage</span>(<span class="st">&quot;Code/Rmd_Stages/08_Ancestry_Analysis.Rmd&quot;</span>,</span>
+<span id="cb27-2"><a href="#cb27-2" tabindex="-1"></a>  <span class="fu">c</span>(shared_settings, settings_05_bayesian, settings_08_ancestry_validation), <span class="at">run =</span> run_08_ancestry_validation)</span></code></pre></div>
+<pre><code>STARTED: Code/Rmd_Stages/08_Ancestry_Analysis.Rmd at 11:36</code></pre>
+<pre><code>FINISHED: Code/Rmd_Stages/08_Ancestry_Analysis.Rmd in 0.1 min</code></pre>
 </div>
 <div id="summary" class="section level2">
 <h2>Summary</h2>
-<div class="sourceCode" id="cb27"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" tabindex="-1"></a><span class="co"># collects timing summaries</span></span>
-<span id="cb27-2"><a href="#cb27-2" tabindex="-1"></a>stage_timings <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(timing_stage_01, timing_stage_02, timing_stage_03, timing_stage_04, timing_stage_05, timing_stage_06, timing_stage_07)</span>
-<span id="cb27-3"><a href="#cb27-3" tabindex="-1"></a><span class="fu">kable</span>(stage_timings, <span class="at">caption =</span> <span class="fu">sprintf</span>(<span class="st">&quot;Total: %.1f min&quot;</span>, <span class="fu">sum</span>(stage_timings<span class="sc">$</span>minutes))) <span class="co">#prepares it for better looking output in HTML</span></span></code></pre></div>
+<div class="sourceCode" id="cb30"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb30-1"><a href="#cb30-1" tabindex="-1"></a><span class="co"># collects timing summaries</span></span>
+<span id="cb30-2"><a href="#cb30-2" tabindex="-1"></a>stage_timings <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(timing_stage_01, timing_stage_02, timing_stage_03, timing_stage_04, timing_stage_05, timing_stage_06, timing_stage_07, timing_stage_08)</span>
+<span id="cb30-3"><a href="#cb30-3" tabindex="-1"></a><span class="fu">kable</span>(stage_timings, <span class="at">caption =</span> <span class="fu">sprintf</span>(<span class="st">&quot;Total: %.1f min&quot;</span>, <span class="fu">sum</span>(stage_timings<span class="sc">$</span>minutes))) <span class="co">#prepares it for better looking output in HTML</span></span></code></pre></div>
 <table>
-<caption>Total: 0.7 min</caption>
+<caption>Total: 0.1 min</caption>
 <thead>
 <tr class="header">
 <th align="left">stage</th>
@@ -3476,8 +3500,8 @@ settings.</p>
 </thead>
 <tbody>
 <tr class="odd">
-<td align="left">05_SNP_Bayesian_Genotyping.Rmd</td>
-<td align="right">0.7</td>
+<td align="left">08_Ancestry_Analysis.Rmd</td>
+<td align="right">0.1</td>
 </tr>
 </tbody>
 </table>

@@ -1,0 +1,201 @@
+---
+title: "Ancestry Analysis"
+subtitle: "`r paste0('Dataset: ', params$dataset_name)`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: hide
+    df_print: kable
+    highlight: tango
+    theme:
+      version: 5
+      bg: "#FFFFFF"
+      fg: "#2E2A26"
+      primary: "#657359"
+      secondary: "#8B775F"
+      base_font: "Times New Roman"
+      heading_font: "Times New Roman"
+      headings-font-weight: 700
+      code_font:
+        google: "JetBrains Mono"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+params:
+  # Dataset
+  dataset_name: "big"
+
+  # Primer panel path
+  primer_panel_path: "Data/Supporting_data/Primer_panels/12864_2021_7761_MOESM12_ESM_filtered.xlsx"
+
+  # Settings from the 04 and 05
+  input_type: "unpadded"
+  use_anchors: true
+  anchor_length: 3
+  probe_type: "asp_primers"
+  threshold_type: "errors"
+  min_score_fraction: 0.65
+  error_rate: 0.08
+  prior_type: "ancestry" # run with wolf ancestry for later comparison
+  prior_het_share: 0.15
+  prior_population: "FreqWOLF_all"
+  prior_floor: 0.001
+  ancestry_prior_shape: 1
+  phi_hom_structure: "shared"
+  genotype_prior_type: "flat" # prior of the genotypes whose run is used
+
+  # Which genotypes to use in PCA
+  gq_cutoff: 20 # Stan genotypes with lower GQ are filtered out and set as missing
+
+  # Simulated reference animals
+  wolf_frequency_column: "FreqWOLF_all" # or FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT or FreqWOLF_IB
+  dog_frequency_column: "FreqDOG" # dog freq from primer panel
+  n_reference_wolves: 300
+  n_reference_dogs: 300
+  n_simulated_per_hybrid_class: 50 # number of F1, backcross to wolf, backcross to dog
+  simulation_seed: 1
+---
+
+```{r, knitr_options, include = FALSE}
+library(knitr)
+opts_chunk$set(comment = "", message = FALSE, class.output = "scroll-output")
+```
+
+```{css, echo = FALSE}
+pre, pre code { white-space: pre-wrap; word-break: break-word; }
+.scroll-output { max-height: 250px; overflow-y: auto; }
+p, li { text-align: justify; hyphens: auto; }
+```
+
+
+
+This last .Rmd stage checks wolf ancestry from the Bayesian model results with similar standard methods as in Harmoinen et al. (2021) research paper, where i got my primer panel from, that is PCA, STRUCTURE and NewHybrids
+
+## Libraries, settings, paths and basic setup
+
+```{r setup}
+suppressMessages({
+  library(readxl)
+  library(dplyr)
+  library(readr)
+  library(ggplot2)
+  library(scales)
+  library(knitr)
+  library(adegenet)
+})
+
+# Settings from YAML header, turns them into usable variables
+invisible(list2env(params, envir = environment()))
+
+# Uploaded shared functions
+source("Code/R_scripts/asp_functions.R", local = TRUE)
+settings_used <- data.frame(setting = c("run_date", names(params)),
+                            value = c(format(Sys.time(), "%Y-%m-%d %H:%M"),
+                                      vapply(params, function(setting_value) paste(setting_value, collapse = ", "), character(1))))
+
+# Basic plot theme, fonts and colours.
+plot_font <- "Times New Roman"
+theme_set(theme_minimal(base_family = plot_font))
+ancestry_class_levels <- c("Wolf-like", "Backcross to wolf", "F1-like", "Backcross to dog", "Dog-like")
+ancestry_class_colours <- setNames(c("#467378", "#D9AF6B", "#C98A4E", "#AF6458", "#7E4038"), ancestry_class_levels)
+results_theme <- theme_minimal(base_family = plot_font, base_size = 11) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, size = 9),
+        legend.position = "bottom",
+        panel.grid.minor = element_blank())
+
+# Paths for genotype and graphics outputs
+graphics_dir <- file.path("Results", dataset_name, "Graphics")
+genotypes_dir <- file.path("Results", dataset_name, "Genotypes_results")
+
+# Shared function for building accurate settings based folder names
+run_names <- build_run_names(input_type, use_anchors, anchor_length, threshold_type, error_rate, min_score_fraction,
+                             prior_type, prior_het_share, prior_population, prior_floor, probe_type = probe_type,
+                             ancestry_prior_shape = ancestry_prior_shape, phi_hom_structure = phi_hom_structure)# ancestry run
+genotype_run_names <- build_run_names(input_type, use_anchors, anchor_length, threshold_type, error_rate, min_score_fraction,
+                                      genotype_prior_type, prior_het_share, prior_population, prior_floor, probe_type = probe_type,
+                                      ancestry_prior_shape = ancestry_prior_shape, phi_hom_structure = phi_hom_structure) #flat run
+bayes_path <- file.path(genotypes_dir, genotype_run_names$bayes_run_name, "all_barcodes_base_mixture_genotypes_hierarchical.tsv") 
+ref_path <- file.path("Data/Supporting_data/Reference_genotypes", paste0("genotypes_", dataset_name, ".tsv")) # Genotype references
+
+# Output path for the ancestry validation plots
+ancestry_out_dir <- file.path(graphics_dir, "STAN_Hierarchical", genotype_run_names$bayes_settings_label, "Ancestry_validation") 
+dir.create(ancestry_out_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Primer panel prep and importing for reference dogs and wolves
+panel_sheet <- read_excel(primer_panel_path, sheet = "Final panel", .name_repair = "minimal")
+panel_alleles <- data.frame(locus = panel_sheet[["SNP name"]],
+                            allele1 = panel_sheet[["Allele 1"]],
+                            allele2 = panel_sheet[["Allele 2"]],
+                            wolf_frequency = as.numeric(panel_sheet[[match(wolf_frequency_column, names(panel_sheet))]]),
+                            dog_frequency = as.numeric(panel_sheet[[match(dog_frequency_column, names(panel_sheet))]]))
+
+# Imported shared data
+bayes_raw <- read_tsv(bayes_path, show_col_types = FALSE)
+stan <- bayes_raw %>%
+  transmute(sample = barcode, locus, genotype = ifelse(GQ >= gq_cutoff, genotype_stan, NA), method = "Stan genotypes") # low GQ are saved as NA
+naive <- bayes_raw %>%
+  transmute(sample = barcode, locus, genotype = genotype_naive, method = "Naive genotypes")
+ref <- read_tsv(ref_path, show_col_types = FALSE) %>%
+  transmute(sample = sample_id, locus, genotype, method = "Reference genotypes")
+stan_sample_parameters <- read_tsv(file.path(genotypes_dir, run_names$bayes_run_name, "sample_parameters_hierarchical.tsv"), show_col_types = FALSE) # wolf ancestry per sample from 05
+```
+
+
+
+## Which wolf allele frequencies fit the samples best
+In the primer where i took my allele frequencies, primers and loci from there are different columns for different freq of wolf subpopulations in Europe. This chunk tests which column fits best for my set of wolves and hybrids, that column or set of allele freeq for specific subpopulation is then used to simulate reference wolves, hybirds and dogs aswell for PCA, DAPC, STRUCTURE and NewHybirds.
+Simulated reference wolves should resemble wolves in my study, it calculates how likely the observed genotypes of samples are under under HWE, column with the highest loglikelihood fits the samples best. If i for example picked the Iberian popualtion my "Dinaric" wolves would look more like hybrids than actual wolves.
+
+```{r Wolf_Frequency_Fit}
+# Grabs the the column that exst in the panel
+wolf_frequency_columns <- intersect(c("FreqWOLF_all", "FreqWOLF_EastEurope", "FreqWOLF_IT", "FreqWOLF_IB"), names(panel_sheet))
+# Only wolf-like samples are used (0.875 could have been set higher, this cutoff can be changed)
+wolf_like_samples <- stan_sample_parameters$barcode[stan_sample_parameters$wolf_ancestry >= 0.875]
+
+# Counts copies og allele 1 in each flat-prior Stan genotype from my samples which have GQ > 20 (filtered with NA not included)
+wolf_like_genotypes <- stan %>%
+  filter(sample %in% wolf_like_samples, !is.na(genotype)) %>%
+  inner_join(panel_alleles[, c("locus", "allele1")], by = "locus") %>%
+  mutate(allele1_copies = (substr(genotype, 1, 1) == allele1) + (substr(genotype, 2, 2) == allele1))
+
+# Dataframe with one row per genotype sample locus pair and one colmn per population with allele 1 freq
+column_frequencies <- sapply(wolf_frequency_columns, function(column_name)
+  as.numeric(panel_sheet[[column_name]][match(wolf_like_genotypes$locus, panel_sheet[["SNP name"]])]))
+
+# Only loci with complete set of frequencies
+complete_rows <- complete.cases(column_frequencies)
+# Settings floors so log doesnt produce infinity or 0 probability of a genotype
+column_frequencies <- pmin(pmax(column_frequencies[complete_rows, , drop = FALSE], prior_floor), 1 - prior_floor)
+
+# Prroduces HWE genotype probabiliity for every genotype with dbinom(copies, 2, p) = p^2, 2p(1 - p) or (1 - p)^2. East eruopean and FreqAll are almost as good meanwhile Iberian and Wolf popualtion clearly dont match. Based on  number of allele 1 copies of my stan flat prior it calculates log probabilites under each population, it adds them up.
+wolf_frequency_fit <- data.frame(
+  frequency_column = wolf_frequency_columns,
+  log_likelihood = colSums(matrix(dbinom(wolf_like_genotypes$allele1_copies[complete_rows], 2, column_frequencies, log = TRUE), ncol = ncol(column_frequencies)))) %>%
+  mutate(difference_to_best = log_likelihood - max(log_likelihood)) %>%
+  arrange(desc(log_likelihood))
+
+kable(wolf_frequency_fit, digits = 1, col.names = c("Wolf frequency column", "Log-likelihood", "Difference to best"))
+```
+  
+
+
+<details><summary>Settings used for this run</summary>
+
+```{r settings_table, echo = FALSE}
+kable(settings_used, row.names = FALSE, col.names = c("Setting", "Value"))
+```
+
+</details>
+
+
+## Reproducibility
+
+<details><summary>Session info</summary>
+
+```{r session_info}
+sessionInfo()
+```
+
+</details>

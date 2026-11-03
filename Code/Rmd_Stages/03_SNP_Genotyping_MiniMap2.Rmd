@@ -55,6 +55,7 @@ opts_chunk$set(comment = "", message = FALSE)
 ```{css, echo = FALSE}
 pre, pre code { white-space: pre-wrap; word-break: break-word; }
 .scroll-output { max-height: 250px; overflow-y: auto; }
+p, li { text-align: justify; hyphens: auto; }
 ```
 
 

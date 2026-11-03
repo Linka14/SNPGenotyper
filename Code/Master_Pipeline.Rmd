@@ -27,6 +27,12 @@ library(knitr)
 opts_chunk$set(comment = "")
 ```
 
+```{css, echo = FALSE}
+pre, pre code { white-space: pre-wrap; word-break: break-word; }
+.scroll-output { max-height: 250px; overflow-y: auto; }
+p, li { text-align: justify; hyphens: auto; }
+```
+
 ```{r, Libraries}
 suppressMessages({
   library(dplyr)
@@ -57,7 +63,7 @@ jobRunScript(master_job_script, workingDir = project_folder, importEnv = FALSE) 
 
 ```{r, Library dependencies}
 # packages the stages need, checked before any stage starts so a missing one fails immediately
-required_packages <- c("ggplot2", "patchwork", "dplyr", "tidyverse","readr", "jsonlite", "scales", "readxl", "Biostrings", "pwalign", "parallel", "rstan", "lme4", "grid")
+required_packages <- c("ggplot2", "patchwork", "dplyr", "tidyverse","readr", "jsonlite", "scales", "readxl", "Biostrings", "pwalign", "parallel", "rstan", "lme4", "grid", "adegenet")
 missing_packages <- required_packages[!vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)]
 if (length(missing_packages) > 0) stop("Install these packages first: ", paste(missing_packages, collapse = ", "))
 ```
@@ -69,9 +75,10 @@ run_01_demultiplexing <- FALSE
 run_02_obitools_summaries <- FALSE
 run_03_minimap2 <- FALSE
 run_04_genotyping <- FALSE
-run_05_bayesian <-TRUE
+run_05_bayesian <-FALSE
 run_06_visualization <- FALSE
 run_07_failed_genotypes <- FALSE
+run_08_ancestry_validation <- TRUE
 
 # Knits one stage Rmd with its settings in a fresh R process (Rscript), prints the progress in the Background Jobs pane, stops the pipeline if the stage fails, and returns how long it took.
 run_stage <- function(stage_rmd, stage_settings = list(), run) { #takes which rmd to run, its settings and whether to run it or not
@@ -96,6 +103,8 @@ run_stage <- function(stage_rmd, stage_settings = list(), run) { #takes which rm
   data.frame(stage = basename(stage_rmd), minutes = stage_minutes)
 }
 ```
+
+
 
 ## Shared settings
 
@@ -142,6 +151,8 @@ shared_settings <- list(
 )
 ```
 
+
+
 ## Stage 1: Dorado demultiplexing and obimultiplex
 
 ```{r, Settings_01}
@@ -155,11 +166,12 @@ settings_01_demultiplexing <- list(
   ngsfilter_path = "Data/Supporting_data/NGSfilter_file/ngsfilter.csv"
 )
 ```
-
 ```{r, Stage_01}
 timing_stage_01 <- run_stage("Code/Rmd_Stages/01_Dorado_Demultiplexing_and_Obi4_visualization.Rmd",
   c(shared_settings, settings_01_demultiplexing), run = run_01_demultiplexing)
 ```
+
+
 
 ## Stage 2: ObiTools4 summaries and plots
 
@@ -170,6 +182,8 @@ timing_stage_02 <- run_stage("Code/Rmd_Stages/02_ObiTools4_Basic_Visualisation.R
   shared_settings, run = run_02_obitools_summaries)
 ```
 
+
+
 ## Stage 3: Minimap2 genotyping
 
 ```{r, Settings_03}
@@ -179,11 +193,11 @@ settings_03_minimap2 <- list(
   minimum_mapping_quality_threshold = 20 # minimum mapping quality for a read to count toward a genotype call
 )
 ```
-
 ```{r, Stage_03}
 timing_stage_03 <- run_stage("Code/Rmd_Stages/03_SNP_Genotyping_Minimap2.Rmd",
   c(shared_settings, settings_03_minimap2), run = run_03_minimap2)
 ```
+
 
 
 ## Stage 4: ASP genotyping
@@ -202,11 +216,11 @@ settings_04_genotyping <- list(
   max_mismatches = 2 # Inf switches it off
 )
 ```
-
 ```{r, Stage_04}
 timing_stage_04 <- run_stage("Code/Rmd_Stages/04_SNP_Genotyping_ASP_primer.Rmd",
   c(shared_settings, settings_04_genotyping), run = run_04_genotyping)
 ```
+
 
 
 ## Stage 5: Bayesian genotyping
@@ -240,11 +254,12 @@ settings_05_bayesian <- list(
   bootstrap_rounds = 1000
 )
 ```
-
 ```{r, Stage_05}
 timing_stage_05 <- run_stage("Code/Rmd_Stages/05_SNP_Bayesian_Genotyping.Rmd",
   c(shared_settings, settings_05_bayesian), run = run_05_bayesian)
 ```
+
+
 
 ## Stage 6: Visualization and data analysis
 
@@ -256,12 +271,13 @@ settings_06_visualization <- list(
   run_filtration_vis = TRUE
 )
 ```
-
 ```{r, Stage_06}
 timing_stage_06 <- run_stage("Code/Rmd_Stages/06_Visualisation_of_Genotyping_Results.Rmd",
   c(shared_settings, settings_01_demultiplexing, settings_04_genotyping, settings_05_bayesian, settings_06_visualization),
   run = run_06_visualization)
 ```
+
+
 
 ## Stage 7: Failed Genotypes Analysis
 
@@ -271,16 +287,40 @@ settings_07_failed_genotypes <- list(
   failed_max_reads_plotted = 20 # reads drawn per plot, the .tsv table keeps every read
 )
 ```
-
 ```{r, Stage_07}
 timing_stage_07 <- run_stage("Code/Rmd_Stages/07_Failed_genotypes_analysis.Rmd",
   c(shared_settings, settings_05_bayesian, settings_07_failed_genotypes), run = run_07_failed_genotypes)
 ```
 
+
+
+## Stage 8: Ancestry validation (PCA and DAPC)
+
+```{r, Settings_08}
+settings_08_ancestry_validation <- list(
+  genotype_prior_type = "flat", # prior should be flat not ancestry (circularity, using ancestry priors for genotype call them using same genotypes for ancestry validation)
+  gq_cutoff = 20, # Cutoff for genotypes, I could use 25 as previously calculated in the genotypes cutoff plot
+
+  # Simulated reference animals from the primer panel with allele frequencies
+  wolf_frequency_column = "FreqWOLF_all", # FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT or FreqWOLF_IB
+  dog_frequency_column = "FreqDOG",
+  n_reference_wolves = 300,
+  n_reference_dogs = 300,
+  n_simulated_per_hybrid_class = 50, # for F1, first and second backcrosses
+  simulation_seed = 1
+)
+```
+```{r, Stage_08}
+timing_stage_08 <- run_stage("Code/Rmd_Stages/08_Ancestry_Analysis.Rmd",
+  c(shared_settings, settings_05_bayesian, settings_08_ancestry_validation), run = run_08_ancestry_validation)
+```
+
+
+
 ## Summary
 
 ```{r, Summary}
 # collects timing summaries
-stage_timings <- bind_rows(timing_stage_01, timing_stage_02, timing_stage_03, timing_stage_04, timing_stage_05, timing_stage_06, timing_stage_07)
+stage_timings <- bind_rows(timing_stage_01, timing_stage_02, timing_stage_03, timing_stage_04, timing_stage_05, timing_stage_06, timing_stage_07, timing_stage_08)
 kable(stage_timings, caption = sprintf("Total: %.1f min", sum(stage_timings$minutes))) #prepares it for better looking output in HTML
 ```
