@@ -70,7 +70,7 @@ p, li { text-align: justify; hyphens: auto; }
 
 
 
-This last .Rmd stage checks wolf ancestry from the Bayesian model results with similar standard methods as in Harmoinen et al. (2021) research paper, where i got my primer panel from, that is PCA, STRUCTURE and NewHybrids
+This last .Rmd stage checks wolf ancestry from the Bayesian model results with similar standard methods as in Harmoinen et al. (2021) research paper, where i got my primer panel from. That is PCA, STRUCTURE and NewHybrids.
 
 ## Libraries, settings, paths and basic setup
 
@@ -83,6 +83,8 @@ suppressMessages({
   library(scales)
   library(knitr)
   library(adegenet)
+  library(tidyr)
+  library(patchwork)
 })
 
 # Settings from YAML header, turns them into usable variables
@@ -145,8 +147,8 @@ stan_sample_parameters <- read_tsv(file.path(genotypes_dir, run_names$bayes_run_
 
 
 ## Which wolf allele frequencies fit the samples best
-In the primer where i took my allele frequencies, primers and loci from there are different columns for different freq of wolf subpopulations in Europe. This chunk tests which column fits best for my set of wolves and hybrids, that column or set of allele freeq for specific subpopulation is then used to simulate reference wolves, hybirds and dogs aswell for PCA, DAPC, STRUCTURE and NewHybirds.
-Simulated reference wolves should resemble wolves in my study, it calculates how likely the observed genotypes of samples are under under HWE, column with the highest loglikelihood fits the samples best. If i for example picked the Iberian popualtion my "Dinaric" wolves would look more like hybrids than actual wolves.
+The original primer panel where I took my prior allele frequencies, primers and loci from, it also contains different columns for different freq of wolf sub populations in Europe. This chunk tests which column fits best for my set of wolves and hybrids. Chosen column (set of allele freq) specific to a sub population, is then used to simulate reference wolves, hybrids and dogs for later use in PCA, DAPC (maybe even STRUCTURE and NewHybirds).
+Simulated reference wolves should resemble wolves in my study. It calculates how likely the observed genotypes of samples are under under HWE, column with the highest log likelihood fits the samples best. If i for example picked the Iberian population my "Dinaric" wolves would look more like hybrids than actual wolves.
 
 ```{r Wolf_Frequency_Fit}
 # Grabs the the column that exst in the panel
@@ -169,7 +171,7 @@ complete_rows <- complete.cases(column_frequencies)
 # Settings floors so log doesnt produce infinity or 0 probability of a genotype
 column_frequencies <- pmin(pmax(column_frequencies[complete_rows, , drop = FALSE], prior_floor), 1 - prior_floor)
 
-# Prroduces HWE genotype probabiliity for every genotype with dbinom(copies, 2, p) = p^2, 2p(1 - p) or (1 - p)^2. East eruopean and FreqAll are almost as good meanwhile Iberian and Wolf popualtion clearly dont match. Based on  number of allele 1 copies of my stan flat prior it calculates log probabilites under each population, it adds them up.
+# Prroduces HWE genotype probabiliity for every genotype with dbinom(copies, 2, p) = p^2, 2p(1 - p) or (1 - p)^2. East eruopean and FreqAll are almost as good meanwhile Iberian and Italian wolf popualtion clearly dont match. Based on  number of allele 1 copies of my stan flat prior it calculates log probabilites under each population, it adds them up.
 wolf_frequency_fit <- data.frame(
   frequency_column = wolf_frequency_columns,
   log_likelihood = colSums(matrix(dbinom(wolf_like_genotypes$allele1_copies[complete_rows], 2, column_frequencies, log = TRUE), ncol = ncol(column_frequencies)))) %>%
@@ -179,6 +181,257 @@ wolf_frequency_fit <- data.frame(
 kable(wolf_frequency_fit, digits = 1, col.names = c("Wolf frequency column", "Log-likelihood", "Difference to best"))
 ```
   
+
+
+## PCA of genotypes with simualated reference wolves, dogs and hybrids
+Next chunk contains principal component analysis similar as in the mentioned research paper, where they used EIGENSOFT smartpca. Here i use adegent package and dudi.pca() with allele frequencies centred and not scaled. Missing genotypes are set to SNP average. It differentiates with the research paper, here I use simulated reference wolves and dogs from the panel using (freqwolf_all and freqdog columns), each locus is set up independently under HWE, no automatic outlier removal because I only have 24 samples, and I use 33 loci instead of 93.
+
+```{r Ancestry_PCA, fig.width = 6.3, fig.height = 5, out.width = "100%", dpi = 300}
+### Data prep for PCA, combines reference, stan and naive genotypes in one table. It checks if the genotype is possible given the panel alleles of thatlocus. If its not it gives NA, wrong but possible calls stay in.
+sample_genotypes <- bind_rows(ref, stan, naive) %>%
+  inner_join(panel_alleles, by = "locus") %>%
+  mutate(genotype = ifelse((substr(genotype, 1, 1) == allele1 | substr(genotype, 1, 1) == allele2) &
+                             (substr(genotype, 2, 2) == allele1 | substr(genotype, 2, 2) == allele2), genotype, NA))
+
+# My 33 loci with valid genotypes
+pca_loci <- sort(unique(sample_genotypes$locus[!is.na(sample_genotypes$genotype)]))
+# Panel rows in the same order as pca_loci
+locus_alleles <- panel_alleles[match(pca_loci, panel_alleles$locus), ]
+  
+# How much the GQ filter removes
+kable(summarise(sample_genotypes, Samples = n_distinct(sample), Genotypes = sum(!is.na(genotype)), Missing = sum(is.na(genotype)), .by = method), caption = sprintf("Genotypes per method over %d loci (Stan genotypes with GQ < %d set to missing)", length(pca_loci), gq_cutoff))
+
+# Wide table one row per sample and method with loci as columns
+sample_table <- sample_genotypes %>%
+  transmute(individual = paste(sample, method, sep = " | "), group = method, locus, genotype) %>%
+  pivot_wider(names_from = locus, values_from = genotype)
+
+### This part creates simulated reference animals (300 wolves and dogs with genotypes for 33 loci). This step is needed because no reference animals are available, they are generated from the primer panel frequencies, number of allele 1 copies is drawn from binomial distribution with 2 draws (HWE genotypes), which gets converted to genotypes and stored as geningd object fo adegenet. Further analysis need the reference points so that it can place my samples in space
+set.seed(simulation_seed)
+
+# Goes through all 33  frequencies, for each locus it draws 300 animals which gives 300  0,1,2 numbers per locus (600x33)
+parent_copies <- rbind(sapply(locus_alleles$wolf_frequency, function(frequency) rbinom(n_reference_wolves, 2, frequency)),
+                       sapply(locus_alleles$dog_frequency, function(frequency) rbinom(n_reference_dogs, 2, frequency)))
+# Label for each row
+parent_group <- rep(c("Simulated wolf", "Simulated dog"), c(n_reference_wolves, n_reference_dogs))
+
+# Allele 1 and 3  letters for each locus repetead for every animal
+allele1_matrix <- matrix(rep(locus_alleles$allele1, each = nrow(parent_copies)), nrow = nrow(parent_copies))
+allele2_matrix <- matrix(rep(locus_alleles$allele2, each = nrow(parent_copies)), nrow = nrow(parent_copies))
+
+# Based on a number 0, 1, 2 it becomes a genotype and gets the alleles form previous matrices
+parent_genotypes <- ifelse(parent_copies == 2, paste0(allele1_matrix, allele1_matrix),
+                           ifelse(parent_copies == 1, paste0(allele1_matrix, allele2_matrix), paste0(allele2_matrix, allele2_matrix)))
+colnames(parent_genotypes) <- pca_loci
+
+# Turns it into a genind object, each allele is one character with names and parent groups
+parent_genind <- df2genind(as.data.frame(parent_genotypes), ncode = 1, ploidy = 2,
+                           ind.names = paste(parent_group, seq_along(parent_group)), pop = parent_group)
+
+#These are split using pop for later hybridize() which need two parent populations (for backcrosses)
+wolf_genind <- parent_genind[pop(parent_genind) == "Simulated wolf"]
+dog_genind <- parent_genind[pop(parent_genind) == "Simulated dog"]
+
+### This part creates simulated hybrids from the simulated wolves and dogs and turns my samples into genind objects as well and combines everything into one complete genind that feeds the PCA and DAPC
+# All the possible hybridizations with second backcrosses as well.
+f1_genind <- hybridize(wolf_genind, dog_genind, n = n_simulated_per_hybrid_class, pop = "Simulated F1", hyb.label = "F1_", quiet = TRUE) #  50 %
+backcross_wolf_genind <- hybridize(wolf_genind, f1_genind, n = n_simulated_per_hybrid_class, pop = "Simulated backcross to wolf", hyb.label = "BCwolf_", quiet = TRUE) # 75 %
+backcross_dog_genind <- hybridize(dog_genind, f1_genind, n = n_simulated_per_hybrid_class, pop = "Simulated backcross to dog", hyb.label = "BCdog_", quiet = TRUE) # 25 %
+second_backcross_wolf_genind <- hybridize(wolf_genind, backcross_wolf_genind, n = n_simulated_per_hybrid_class, pop = "Simulated second backcross to wolf", hyb.label = "BC2wolf_", quiet = TRUE) # 87.5 %
+second_backcross_dog_genind <- hybridize(dog_genind, backcross_dog_genind, n = n_simulated_per_hybrid_class, pop = "Simulated second backcross to dog", hyb.label = "BC2dog_", quiet = TRUE)  # 12.5%
+
+# Locus column in pca_loci order
+genotype_columns <- as.data.frame(sample_table[, pca_loci])
+genotype_columns[is.na(genotype_columns)] <- "" # replaces NA for "" for genind
+
+# Genind for my samples, pop is set by group (stan, naive, reference)
+sample_genind <- df2genind(genotype_columns, ncode = 1, ploidy = 2, ind.names = sample_table$individual, pop = sample_table$group, NA.char = "")
+
+# Combines all (922 animals)
+all_genind <- repool(parent_genind, f1_genind, backcross_wolf_genind, backcross_dog_genind,
+                     second_backcross_wolf_genind, second_backcross_dog_genind, sample_genind)
+animal_group <- as.character(pop(all_genind))
+
+### This part runs the PCA, genotypes are converted to allele freq per animal, missing genotypes are replcaed by the allele mean.
+
+# Number table one row per animal, convertes genotypes into numbers 
+allele_table <- tab(all_genind, freq = TRUE, NA.method = "mean")
+
+# Only simulated and Stan  genotypees build the PCA, ref and naive are just projected onto the axis
+pca_rows <- !(animal_group %in% c("Reference genotypes", "Naive genotypes"))
+
+# PCA, centered at 0, not divided by sd, stores results from 3 axes
+genotype_pca <- dudi.pca(as.data.frame(allele_table[pca_rows, ]), center = TRUE, scale = FALSE, scannf = FALSE, nf = 3)
+projected_scores <- suprow(genotype_pca, as.data.frame(allele_table[!pca_rows, ]))$lisup # projected on the axis
+pc_scores <- rbind(as.matrix(genotype_pca$li), as.matrix(projected_scores))[rownames(allele_table), ] # back in the order of all_genind
+variance_explained <- 100 * genotype_pca$eig / sum(genotype_pca$eig)
+
+# Saving the PCA table
+pca_scores <- data.frame(individual = rownames(pc_scores), group = animal_group, PC1 = pc_scores[, 1], PC2 = pc_scores[, 2], PC3 = pc_scores[, 3])
+write_tsv(pca_scores, file.path(ancestry_out_dir, "pca_scores.tsv"))
+
+### Method comparison for my three ref, stan and naive genotypes
+method_comparison <- pca_scores %>%
+  filter(group %in% c("Reference genotypes", "Stan genotypes", "Naive genotypes")) %>%
+  transmute(sample = sub(" \\| .*", "", individual), group, PC1) %>%
+  pivot_wider(names_from = group, values_from = PC1) %>%
+  mutate(stan_difference = `Stan genotypes` - `Reference genotypes`, naive_difference = `Naive genotypes` - `Reference genotypes`) %>%
+  arrange(desc(abs(stan_difference)))
+
+write_tsv(method_comparison, file.path(ancestry_out_dir, "pca_method_comparison.tsv"))
+kable(method_comparison, digits = 2, col.names = c("Sample", "PC1 reference", "PC1 Stan", "PC1 naive", "Stan - reference", "Naive - reference"), caption = "PC1 of every sample with the three genotype methods, largest Stan difference first")
+
+### Plots with adegenet
+
+# data prep, groups in order for the legend
+simulated_levels <- c("Simulated wolf", "Simulated second backcross to wolf", "Simulated backcross to wolf", "Simulated F1",
+                      "Simulated backcross to dog", "Simulated second backcross to dog", "Simulated dog")
+simulated_short_labels <- c("Wolf", "BC2 wolf", "BC wolf", "F1", "BC dog", "BC2 dog", "Dog")
+simulated_colours <- setNames(c("#467378", "#9AA582", "#D9AF6B", "#C98A4E", "#AF6458", "#8B775F", "#7E4038"), simulated_levels)
+
+is_simulated <- animal_group %in% simulated_levels
+simulated_factor <- factor(animal_group[is_simulated], levels = simulated_levels)
+group_means <- tapply(pc_scores[is_simulated, 1], simulated_factor, mean) # mean of every simulated group
+
+panel_theme <- theme_bw(base_family = plot_font, base_size = 9) +
+  theme(panel.grid = element_blank(), plot.title = element_text(face = "bold", size = 10),
+        plot.title.position = "plot", legend.position = "bottom", plot.margin = margin(8, 8, 8, 8))
+
+simulated_scores <- data.frame(PC1 = pc_scores[is_simulated, 1], PC2 = pc_scores[is_simulated, 2],
+                               group = factor(simulated_short_labels[as.integer(simulated_factor)], levels = simulated_short_labels))
+short_colours <- setNames(simulated_colours, simulated_short_labels)
+
+# Stan genotypes of the samples with their ancestry class from 05
+stan_scores <- pca_scores %>%
+  filter(group == "Stan genotypes") %>%
+  mutate(sample = sub(" \\| .*", "", individual)) %>%
+  left_join(transmute(stan_sample_parameters, sample = barcode, wolf_ancestry, wolf_ancestry_low, wolf_ancestry_high,
+                      ancestry_class = case_when(wolf_ancestry >= 0.875 ~ "Wolf-like", wolf_ancestry >= 0.625 ~ "Backcross to wolf", wolf_ancestry >= 0.375 ~ "F1-like", wolf_ancestry >= 0.125 ~ "Backcross to dog", TRUE ~ "Dog-like")), by = "sample")
+
+# candidates that arent wolf like
+candidate_scores <- filter(stan_scores, ancestry_class != "Wolf-like")
+axis_description <- sprintf("PC1 (%.1f %%) horizontal, PC2 (%.1f %%) vertical", variance_explained[1], variance_explained[2])
+pc1_label <- sprintf("PC1 (%.1f %% of variance)", variance_explained[1])
+
+## 1. Plot , PC1 against PC2 with ellipses for the simulated groups, samples on top. Created in ggplot (all) so they can later be used with patchwork inside a panel. Tried it first with adegent own functions but it didnt look quite right  
+
+p_pca <- ggplot(simulated_scores, aes(PC1, PC2, colour = group)) +
+  geom_point(size = 0.5, alpha = 0.3) +
+  stat_ellipse(type = "norm", level = 0.675, linewidth = 0.4) +
+  geom_point(data = stan_scores, aes(PC1, PC2), inherit.aes = FALSE, shape = 21, size = 1.8, colour = "black",
+             fill = ancestry_class_colours[stan_scores$ancestry_class]) +
+  geom_text(data = candidate_scores, aes(PC1, PC2, label = sample), inherit.aes = FALSE, vjust = -1, size = 2.6, family = plot_font) +
+  scale_colour_manual(values = short_colours, name = NULL) +
+  guides(colour = guide_legend(nrow = 1, override.aes = list(size = 2, alpha = 1))) +
+  labs(title = "PCA of simulated groups and samples", x = pc1_label, y = sprintf("PC2 (%.1f %% of variance)", variance_explained[2])) +
+  panel_theme
+
+## 2. Plot, PC1 only with range of every simulated group as a box, samples as points in the top row, similar structure as before
+pc1_rows <- c(simulated_short_labels, "Samples")
+p_pc1 <- ggplot(simulated_scores, aes(PC1, factor(group, levels = pc1_rows), fill = group, colour = group)) +
+  geom_boxplot(alpha = 0.4, outlier.shape = NA, width = 0.6) +
+  geom_point(data = stan_scores, aes(PC1, factor("Samples", levels = pc1_rows)), inherit.aes = FALSE, shape = 21, size = 1.8, colour = "black",
+             fill = ancestry_class_colours[stan_scores$ancestry_class], position = position_jitter(width = 0, height = 0.15, seed = 1)) +
+  geom_text(data = candidate_scores, aes(PC1, factor("Samples", levels = pc1_rows), label = sample), inherit.aes = FALSE,
+            vjust = -1.3, size = 2.6, family = plot_font) +
+  scale_fill_manual(values = short_colours, guide = "none") + scale_colour_manual(values = short_colours, guide = "none") +
+  scale_y_discrete(drop = FALSE) +
+  labs(title = "PC1 of every simulated group and the samples", x = pc1_label, y = NULL) +
+  panel_theme
+
+## 3. Plot, agreement between my Stan ancestry measruments and PC1. Quick check if different methods describe the structure similary.
+ancestry_correlation <- cor(stan_scores$wolf_ancestry, stan_scores$PC1)
+p_ancestry <- ggplot(stan_scores, aes(wolf_ancestry, PC1)) +
+  geom_hline(yintercept = group_means, colour = simulated_colours, linetype = "dotted") +
+  geom_errorbar(aes(xmin = wolf_ancestry_low, xmax = wolf_ancestry_high), width = 0.15, orientation = "y", colour = "grey50") +
+  geom_point(shape = 21, size = 1.8, colour = "black", fill = ancestry_class_colours[stan_scores$ancestry_class]) +
+  geom_text(data = candidate_scores, aes(label = sample), vjust = -1, size = 2.6, family = plot_font) +
+  annotate("text", x = 0, y = max(stan_scores$PC1), hjust = 0, size = 2.8, family = plot_font,
+           label = sprintf("Pearson r = %.3f (%d samples)", ancestry_correlation, nrow(stan_scores))) +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(sec.axis = dup_axis(breaks = group_means, labels = simulated_short_labels, name = NULL)) +
+  labs(title = "Stan wolf ancestry against PC1", x = "Wolf ancestry (05), mean and 95 % interval", y = pc1_label) +
+  panel_theme
+
+p_pca
+p_pc1
+p_ancestry
+
+ggsave(file.path(ancestry_out_dir, "pca_adegenet.png"), p_pca, width = 16, height = 12.7, units = "cm", dpi = 300, bg = "white")
+ggsave(file.path(ancestry_out_dir, "pca_adegenet.pdf"), p_pca, width = 16, height = 12.7, units = "cm", device = cairo_pdf)
+ggsave(file.path(ancestry_out_dir, "pca_pc1_only.png"), p_pc1, width = 16, height = 12.7, units = "cm", dpi = 300, bg = "white")
+ggsave(file.path(ancestry_out_dir, "pca_pc1_only.pdf"), p_pc1, width = 16, height = 12.7, units = "cm", device = cairo_pdf)
+ggsave(file.path(ancestry_out_dir, "pca_pc1_against_stan_ancestry.png"), p_ancestry, width = 16, height = 12.7, units = "cm", dpi = 300, bg = "white")
+ggsave(file.path(ancestry_out_dir, "pca_pc1_against_stan_ancestry.pdf"), p_ancestry, width = 16, height = 12.7, units = "cm", device = cairo_pdf)
+```
+
+
+
+## DAPC with the simulated groups as known classes
+
+This chunk runs the DAPC, its trained on simulated wolves and hybrids (850) and asks to which group each of my samples most likely belongs to. Genotypes are first reduced to PCA components (10) and then DAPC finds best ways to disciminate between those groups. Results are similar to class probabilities of NewHybrids. 
+
+```{r DAPC, fig.width = 6.3, fig.height = 5, out.width = "100%", dpi = 300}
+# Number principal components kept, if there are too many it can look better seperated than it actually is
+n_dapc_pca <- 10 
+# All the simulated animals for the training set, group is known
+simulated_genind <- all_genind[which(is_simulated)]
+pop(simulated_genind) <- simulated_factor
+genotype_dapc <- dapc(simulated_genind, n.pca = n_dapc_pca, n.da = length(simulated_levels) - 1)
+
+# Share of simulated animals that are recognised as the same group from where they "come from"
+kable(data.frame(group = names(summary(genotype_dapc)$assign.per.pop), correct_percent = 100 * summary(genotype_dapc)$assign.per.pop),
+      digits = 1, col.names = c("Simulated group", "Assigned to own group (%)"), caption = "DAPC self-assignment of the simulated animals")
+
+# Membership probabilities of my 24 Stan (flat prior) genotypes samples
+stan_rows <- which(animal_group == "Stan genotypes")
+dapc_samples <- predict(genotype_dapc, newdata = all_genind[stan_rows])
+dapc_membership <- data.frame(sample = sub(" \\| .*", "", indNames(all_genind)[stan_rows]),
+                              assigned_group = as.character(dapc_samples$assign), # dapc class
+                              highest_probability = apply(dapc_samples$posterior, 1, max), #probability of the class
+                              round(dapc_samples$posterior, 3), check.names = FALSE)
+
+# Table of seven probability columns per sample
+write_tsv(dapc_membership, file.path(ancestry_out_dir, "dapc_sample_membership.tsv"))
+kable(arrange(dapc_membership[, c("sample", "assigned_group", "highest_probability")], assigned_group), digits = 3,
+      col.names = c("Sample", "DAPC group", "Membership probability"))
+
+# Membership probabilities as stacked barplot
+dapc_order <- dapc_membership$sample[order(stan_scores$PC1[match(dapc_membership$sample, stan_scores$sample)])]
+dapc_long <- data.frame(sample = rep(dapc_membership$sample, times = length(simulated_levels)),
+                        group = rep(simulated_short_labels, each = nrow(dapc_membership)),
+                        probability = as.vector(dapc_samples$posterior[, simulated_levels]))
+
+p_dapc <- ggplot(dapc_long, aes(factor(sample, levels = dapc_order), probability, fill = factor(group, levels = simulated_short_labels))) +
+  geom_col(width = 0.85, position = position_stack(reverse = TRUE)) +
+  scale_fill_manual(values = short_colours, name = NULL) +
+  scale_y_continuous(expand = c(0, 0)) +
+  guides(fill = guide_legend(nrow = 1)) +
+  labs(title = "DAPC membership probability of the samples", x = NULL, y = "Membership probability") +
+  panel_theme + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 6.5))
+
+p_dapc
+ggsave(file.path(ancestry_out_dir, "dapc_membership.png"), p_dapc, width = 16, height = 12.7, units = "cm", dpi = 300, bg = "white")
+ggsave(file.path(ancestry_out_dir, "dapc_membership.pdf"), p_dapc, width = 16, height = 12.7, units = "cm", device = cairo_pdf) 
+```
+
+
+
+## Ancestry analysis panel
+
+```{r Ancestry_Panel, fig.width = 11.69, fig.height = 8.27, out.width = "100%", dpi = 300}
+# Four plots combined into a panel using patchwork, tried it first with adegenet original plots but it looked wonky.
+ancestry_panel <- (p_pca + labs(title = paste0("A   ", p_pca$labels$title))) +
+  (p_pc1 + labs(title = paste0("B   ", p_pc1$labels$title))) +
+  (p_ancestry + labs(title = paste0("C   ", p_ancestry$labels$title))) +
+  (p_dapc + labs(title = paste0("D   ", p_dapc$labels$title)) + guides(fill = "none")) +
+  plot_layout(ncol = 2, guides = "collect") & theme(legend.position = "bottom")
+ancestry_panel
+
+ggsave(file.path(ancestry_out_dir, "ancestry_panel.png"), ancestry_panel, width = 29.7, height = 21, units = "cm", dpi = 300, bg = "white")
+ggsave(file.path(ancestry_out_dir, "ancestry_panel.pdf"), ancestry_panel, width = 29.7, height = 21, units = "cm", device = cairo_pdf)
+```
+
 
 
 <details><summary>Settings used for this run</summary>
