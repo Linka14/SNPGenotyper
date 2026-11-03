@@ -306,7 +306,7 @@ settings_08_ancestry_validation <- list(
   dog_frequency_column = "FreqDOG",
   n_reference_wolves = 300,
   n_reference_dogs = 300,
-  n_simulated_per_hybrid_class = 50, # for F1, first and second backcrosses
+  n_simulated_per_hybrid_class = 300, # for F1, first and second backcrosses
   simulation_seed = 1
 )
 ```

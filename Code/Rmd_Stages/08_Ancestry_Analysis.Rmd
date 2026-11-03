@@ -53,7 +53,7 @@ params:
   dog_frequency_column: "FreqDOG" # dog freq from primer panel
   n_reference_wolves: 300
   n_reference_dogs: 300
-  n_simulated_per_hybrid_class: 50 # number of F1, backcross to wolf, backcross to dog
+  n_simulated_per_hybrid_class: 300 # number of F1, backcross to wolf, backcross to dog
   simulation_seed: 1
 ---
 
@@ -373,11 +373,22 @@ This chunk runs the DAPC, its trained on simulated wolves and hybrids (850) and 
 
 ```{r DAPC, fig.width = 6.3, fig.height = 5, out.width = "100%", dpi = 300}
 # Number principal components kept, if there are too many it can look better seperated than it actually is
-n_dapc_pca <- 10 
+n_dapc_pca <- 5
 # All the simulated animals for the training set, group is known
 simulated_genind <- all_genind[which(is_simulated)]
 pop(simulated_genind) <- simulated_factor
 genotype_dapc <- dapc(simulated_genind, n.pca = n_dapc_pca, n.da = length(simulated_levels) - 1)
+
+# This part cheks how many PC components DAPC should keep, before it was hard coded as 10, now its actually cross validated. from 1 to 20 it trins DAPC on a set of simualted animals, and tests on the rest.
+simulated_allele_table <- tab(simulated_genind, freq = TRUE, NA.method = "mean") # converts to plain number table
+set.seed(simulation_seed)
+
+# the cross validation, 30 random splits for each PC count, 10 % of animals for testing
+dapc_cross_validation <- xvalDapc(simulated_allele_table, simulated_factor, n.pca = 1:20, n.rep = 30, training.set = 0.9, xval.plot = FALSE)
+dapc_cross_validation_table <- data.frame(n_pca = as.integer(names(dapc_cross_validation$`Mean Successful Assignment by Number of PCs of PCA`)), correct_percent = 100 * dapc_cross_validation$`Mean Successful Assignment by Number of PCs of PCA`)
+
+write_tsv(dapc_cross_validation_table, file.path(ancestry_out_dir, "dapc_cross_validation.tsv"))
+kable(dapc_cross_validation_table, digits = 1, col.names = c("Principal components kept", "Correct assignment of held-back animals (%)"), caption = sprintf("DAPC cross-validation, best: %s PCs (used: %d)", dapc_cross_validation$`Number of PCs Achieving Highest Mean Success`, n_dapc_pca))
 
 # Share of simulated animals that are recognised as the same group from where they "come from"
 kable(data.frame(group = names(summary(genotype_dapc)$assign.per.pop), correct_percent = 100 * summary(genotype_dapc)$assign.per.pop),
