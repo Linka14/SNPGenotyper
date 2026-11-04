@@ -1,0 +1,701 @@
+index	true_class	flag
+1	Simulated wolf	z0
+2	Simulated wolf	z0
+3	Simulated wolf	z0
+4	Simulated wolf	z0
+5	Simulated wolf	z0
+6	Simulated wolf	z0
+7	Simulated wolf	z0
+8	Simulated wolf	z0
+9	Simulated wolf	z0
+10	Simulated wolf	z0
+11	Simulated wolf	z0
+12	Simulated wolf	z0
+13	Simulated wolf	z0
+14	Simulated wolf	z0
+15	Simulated wolf	z0
+16	Simulated wolf	z0
+17	Simulated wolf	z0
+18	Simulated wolf	z0
+19	Simulated wolf	z0
+20	Simulated wolf	z0
+21	Simulated wolf	z0
+22	Simulated wolf	z0
+23	Simulated wolf	z0
+24	Simulated wolf	z0
+25	Simulated wolf	z0
+26	Simulated wolf	z0
+27	Simulated wolf	z0
+28	Simulated wolf	z0
+29	Simulated wolf	z0
+30	Simulated wolf	z0
+31	Simulated wolf	z0
+32	Simulated wolf	z0
+33	Simulated wolf	z0
+34	Simulated wolf	z0
+35	Simulated wolf	z0
+36	Simulated wolf	z0
+37	Simulated wolf	z0
+38	Simulated wolf	z0
+39	Simulated wolf	z0
+40	Simulated wolf	z0
+41	Simulated wolf	z0
+42	Simulated wolf	z0
+43	Simulated wolf	z0
+44	Simulated wolf	z0
+45	Simulated wolf	z0
+46	Simulated wolf	z0
+47	Simulated wolf	z0
+48	Simulated wolf	z0
+49	Simulated wolf	z0
+50	Simulated wolf	z0
+51	Simulated wolf	z0
+52	Simulated wolf	z0
+53	Simulated wolf	z0
+54	Simulated wolf	z0
+55	Simulated wolf	z0
+56	Simulated wolf	z0
+57	Simulated wolf	z0
+58	Simulated wolf	z0
+59	Simulated wolf	z0
+60	Simulated wolf	z0
+61	Simulated wolf	z0
+62	Simulated wolf	z0
+63	Simulated wolf	z0
+64	Simulated wolf	z0
+65	Simulated wolf	z0
+66	Simulated wolf	z0
+67	Simulated wolf	z0
+68	Simulated wolf	z0
+69	Simulated wolf	z0
+70	Simulated wolf	z0
+71	Simulated wolf	z0
+72	Simulated wolf	z0
+73	Simulated wolf	z0
+74	Simulated wolf	z0
+75	Simulated wolf	z0
+76	Simulated wolf	z0
+77	Simulated wolf	z0
+78	Simulated wolf	z0
+79	Simulated wolf	z0
+80	Simulated wolf	z0
+81	Simulated wolf	z0
+82	Simulated wolf	z0
+83	Simulated wolf	z0
+84	Simulated wolf	z0
+85	Simulated wolf	z0
+86	Simulated wolf	z0
+87	Simulated wolf	z0
+88	Simulated wolf	z0
+89	Simulated wolf	z0
+90	Simulated wolf	z0
+91	Simulated wolf	z0
+92	Simulated wolf	z0
+93	Simulated wolf	z0
+94	Simulated wolf	z0
+95	Simulated wolf	z0
+96	Simulated wolf	z0
+97	Simulated wolf	z0
+98	Simulated wolf	z0
+99	Simulated wolf	z0
+100	Simulated wolf	z0
+101	Simulated dog	z1
+102	Simulated dog	z1
+103	Simulated dog	z1
+104	Simulated dog	z1
+105	Simulated dog	z1
+106	Simulated dog	z1
+107	Simulated dog	z1
+108	Simulated dog	z1
+109	Simulated dog	z1
+110	Simulated dog	z1
+111	Simulated dog	z1
+112	Simulated dog	z1
+113	Simulated dog	z1
+114	Simulated dog	z1
+115	Simulated dog	z1
+116	Simulated dog	z1
+117	Simulated dog	z1
+118	Simulated dog	z1
+119	Simulated dog	z1
+120	Simulated dog	z1
+121	Simulated dog	z1
+122	Simulated dog	z1
+123	Simulated dog	z1
+124	Simulated dog	z1
+125	Simulated dog	z1
+126	Simulated dog	z1
+127	Simulated dog	z1
+128	Simulated dog	z1
+129	Simulated dog	z1
+130	Simulated dog	z1
+131	Simulated dog	z1
+132	Simulated dog	z1
+133	Simulated dog	z1
+134	Simulated dog	z1
+135	Simulated dog	z1
+136	Simulated dog	z1
+137	Simulated dog	z1
+138	Simulated dog	z1
+139	Simulated dog	z1
+140	Simulated dog	z1
+141	Simulated dog	z1
+142	Simulated dog	z1
+143	Simulated dog	z1
+144	Simulated dog	z1
+145	Simulated dog	z1
+146	Simulated dog	z1
+147	Simulated dog	z1
+148	Simulated dog	z1
+149	Simulated dog	z1
+150	Simulated dog	z1
+151	Simulated dog	z1
+152	Simulated dog	z1
+153	Simulated dog	z1
+154	Simulated dog	z1
+155	Simulated dog	z1
+156	Simulated dog	z1
+157	Simulated dog	z1
+158	Simulated dog	z1
+159	Simulated dog	z1
+160	Simulated dog	z1
+161	Simulated dog	z1
+162	Simulated dog	z1
+163	Simulated dog	z1
+164	Simulated dog	z1
+165	Simulated dog	z1
+166	Simulated dog	z1
+167	Simulated dog	z1
+168	Simulated dog	z1
+169	Simulated dog	z1
+170	Simulated dog	z1
+171	Simulated dog	z1
+172	Simulated dog	z1
+173	Simulated dog	z1
+174	Simulated dog	z1
+175	Simulated dog	z1
+176	Simulated dog	z1
+177	Simulated dog	z1
+178	Simulated dog	z1
+179	Simulated dog	z1
+180	Simulated dog	z1
+181	Simulated dog	z1
+182	Simulated dog	z1
+183	Simulated dog	z1
+184	Simulated dog	z1
+185	Simulated dog	z1
+186	Simulated dog	z1
+187	Simulated dog	z1
+188	Simulated dog	z1
+189	Simulated dog	z1
+190	Simulated dog	z1
+191	Simulated dog	z1
+192	Simulated dog	z1
+193	Simulated dog	z1
+194	Simulated dog	z1
+195	Simulated dog	z1
+196	Simulated dog	z1
+197	Simulated dog	z1
+198	Simulated dog	z1
+199	Simulated dog	z1
+200	Simulated dog	z1
+201	Simulated F1	
+202	Simulated F1	
+203	Simulated F1	
+204	Simulated F1	
+205	Simulated F1	
+206	Simulated F1	
+207	Simulated F1	
+208	Simulated F1	
+209	Simulated F1	
+210	Simulated F1	
+211	Simulated F1	
+212	Simulated F1	
+213	Simulated F1	
+214	Simulated F1	
+215	Simulated F1	
+216	Simulated F1	
+217	Simulated F1	
+218	Simulated F1	
+219	Simulated F1	
+220	Simulated F1	
+221	Simulated F1	
+222	Simulated F1	
+223	Simulated F1	
+224	Simulated F1	
+225	Simulated F1	
+226	Simulated F1	
+227	Simulated F1	
+228	Simulated F1	
+229	Simulated F1	
+230	Simulated F1	
+231	Simulated F1	
+232	Simulated F1	
+233	Simulated F1	
+234	Simulated F1	
+235	Simulated F1	
+236	Simulated F1	
+237	Simulated F1	
+238	Simulated F1	
+239	Simulated F1	
+240	Simulated F1	
+241	Simulated F1	
+242	Simulated F1	
+243	Simulated F1	
+244	Simulated F1	
+245	Simulated F1	
+246	Simulated F1	
+247	Simulated F1	
+248	Simulated F1	
+249	Simulated F1	
+250	Simulated F1	
+251	Simulated F1	
+252	Simulated F1	
+253	Simulated F1	
+254	Simulated F1	
+255	Simulated F1	
+256	Simulated F1	
+257	Simulated F1	
+258	Simulated F1	
+259	Simulated F1	
+260	Simulated F1	
+261	Simulated F1	
+262	Simulated F1	
+263	Simulated F1	
+264	Simulated F1	
+265	Simulated F1	
+266	Simulated F1	
+267	Simulated F1	
+268	Simulated F1	
+269	Simulated F1	
+270	Simulated F1	
+271	Simulated F1	
+272	Simulated F1	
+273	Simulated F1	
+274	Simulated F1	
+275	Simulated F1	
+276	Simulated F1	
+277	Simulated F1	
+278	Simulated F1	
+279	Simulated F1	
+280	Simulated F1	
+281	Simulated F1	
+282	Simulated F1	
+283	Simulated F1	
+284	Simulated F1	
+285	Simulated F1	
+286	Simulated F1	
+287	Simulated F1	
+288	Simulated F1	
+289	Simulated F1	
+290	Simulated F1	
+291	Simulated F1	
+292	Simulated F1	
+293	Simulated F1	
+294	Simulated F1	
+295	Simulated F1	
+296	Simulated F1	
+297	Simulated F1	
+298	Simulated F1	
+299	Simulated F1	
+300	Simulated F1	
+301	Simulated backcross to wolf	
+302	Simulated backcross to wolf	
+303	Simulated backcross to wolf	
+304	Simulated backcross to wolf	
+305	Simulated backcross to wolf	
+306	Simulated backcross to wolf	
+307	Simulated backcross to wolf	
+308	Simulated backcross to wolf	
+309	Simulated backcross to wolf	
+310	Simulated backcross to wolf	
+311	Simulated backcross to wolf	
+312	Simulated backcross to wolf	
+313	Simulated backcross to wolf	
+314	Simulated backcross to wolf	
+315	Simulated backcross to wolf	
+316	Simulated backcross to wolf	
+317	Simulated backcross to wolf	
+318	Simulated backcross to wolf	
+319	Simulated backcross to wolf	
+320	Simulated backcross to wolf	
+321	Simulated backcross to wolf	
+322	Simulated backcross to wolf	
+323	Simulated backcross to wolf	
+324	Simulated backcross to wolf	
+325	Simulated backcross to wolf	
+326	Simulated backcross to wolf	
+327	Simulated backcross to wolf	
+328	Simulated backcross to wolf	
+329	Simulated backcross to wolf	
+330	Simulated backcross to wolf	
+331	Simulated backcross to wolf	
+332	Simulated backcross to wolf	
+333	Simulated backcross to wolf	
+334	Simulated backcross to wolf	
+335	Simulated backcross to wolf	
+336	Simulated backcross to wolf	
+337	Simulated backcross to wolf	
+338	Simulated backcross to wolf	
+339	Simulated backcross to wolf	
+340	Simulated backcross to wolf	
+341	Simulated backcross to wolf	
+342	Simulated backcross to wolf	
+343	Simulated backcross to wolf	
+344	Simulated backcross to wolf	
+345	Simulated backcross to wolf	
+346	Simulated backcross to wolf	
+347	Simulated backcross to wolf	
+348	Simulated backcross to wolf	
+349	Simulated backcross to wolf	
+350	Simulated backcross to wolf	
+351	Simulated backcross to wolf	
+352	Simulated backcross to wolf	
+353	Simulated backcross to wolf	
+354	Simulated backcross to wolf	
+355	Simulated backcross to wolf	
+356	Simulated backcross to wolf	
+357	Simulated backcross to wolf	
+358	Simulated backcross to wolf	
+359	Simulated backcross to wolf	
+360	Simulated backcross to wolf	
+361	Simulated backcross to wolf	
+362	Simulated backcross to wolf	
+363	Simulated backcross to wolf	
+364	Simulated backcross to wolf	
+365	Simulated backcross to wolf	
+366	Simulated backcross to wolf	
+367	Simulated backcross to wolf	
+368	Simulated backcross to wolf	
+369	Simulated backcross to wolf	
+370	Simulated backcross to wolf	
+371	Simulated backcross to wolf	
+372	Simulated backcross to wolf	
+373	Simulated backcross to wolf	
+374	Simulated backcross to wolf	
+375	Simulated backcross to wolf	
+376	Simulated backcross to wolf	
+377	Simulated backcross to wolf	
+378	Simulated backcross to wolf	
+379	Simulated backcross to wolf	
+380	Simulated backcross to wolf	
+381	Simulated backcross to wolf	
+382	Simulated backcross to wolf	
+383	Simulated backcross to wolf	
+384	Simulated backcross to wolf	
+385	Simulated backcross to wolf	
+386	Simulated backcross to wolf	
+387	Simulated backcross to wolf	
+388	Simulated backcross to wolf	
+389	Simulated backcross to wolf	
+390	Simulated backcross to wolf	
+391	Simulated backcross to wolf	
+392	Simulated backcross to wolf	
+393	Simulated backcross to wolf	
+394	Simulated backcross to wolf	
+395	Simulated backcross to wolf	
+396	Simulated backcross to wolf	
+397	Simulated backcross to wolf	
+398	Simulated backcross to wolf	
+399	Simulated backcross to wolf	
+400	Simulated backcross to wolf	
+401	Simulated backcross to dog	
+402	Simulated backcross to dog	
+403	Simulated backcross to dog	
+404	Simulated backcross to dog	
+405	Simulated backcross to dog	
+406	Simulated backcross to dog	
+407	Simulated backcross to dog	
+408	Simulated backcross to dog	
+409	Simulated backcross to dog	
+410	Simulated backcross to dog	
+411	Simulated backcross to dog	
+412	Simulated backcross to dog	
+413	Simulated backcross to dog	
+414	Simulated backcross to dog	
+415	Simulated backcross to dog	
+416	Simulated backcross to dog	
+417	Simulated backcross to dog	
+418	Simulated backcross to dog	
+419	Simulated backcross to dog	
+420	Simulated backcross to dog	
+421	Simulated backcross to dog	
+422	Simulated backcross to dog	
+423	Simulated backcross to dog	
+424	Simulated backcross to dog	
+425	Simulated backcross to dog	
+426	Simulated backcross to dog	
+427	Simulated backcross to dog	
+428	Simulated backcross to dog	
+429	Simulated backcross to dog	
+430	Simulated backcross to dog	
+431	Simulated backcross to dog	
+432	Simulated backcross to dog	
+433	Simulated backcross to dog	
+434	Simulated backcross to dog	
+435	Simulated backcross to dog	
+436	Simulated backcross to dog	
+437	Simulated backcross to dog	
+438	Simulated backcross to dog	
+439	Simulated backcross to dog	
+440	Simulated backcross to dog	
+441	Simulated backcross to dog	
+442	Simulated backcross to dog	
+443	Simulated backcross to dog	
+444	Simulated backcross to dog	
+445	Simulated backcross to dog	
+446	Simulated backcross to dog	
+447	Simulated backcross to dog	
+448	Simulated backcross to dog	
+449	Simulated backcross to dog	
+450	Simulated backcross to dog	
+451	Simulated backcross to dog	
+452	Simulated backcross to dog	
+453	Simulated backcross to dog	
+454	Simulated backcross to dog	
+455	Simulated backcross to dog	
+456	Simulated backcross to dog	
+457	Simulated backcross to dog	
+458	Simulated backcross to dog	
+459	Simulated backcross to dog	
+460	Simulated backcross to dog	
+461	Simulated backcross to dog	
+462	Simulated backcross to dog	
+463	Simulated backcross to dog	
+464	Simulated backcross to dog	
+465	Simulated backcross to dog	
+466	Simulated backcross to dog	
+467	Simulated backcross to dog	
+468	Simulated backcross to dog	
+469	Simulated backcross to dog	
+470	Simulated backcross to dog	
+471	Simulated backcross to dog	
+472	Simulated backcross to dog	
+473	Simulated backcross to dog	
+474	Simulated backcross to dog	
+475	Simulated backcross to dog	
+476	Simulated backcross to dog	
+477	Simulated backcross to dog	
+478	Simulated backcross to dog	
+479	Simulated backcross to dog	
+480	Simulated backcross to dog	
+481	Simulated backcross to dog	
+482	Simulated backcross to dog	
+483	Simulated backcross to dog	
+484	Simulated backcross to dog	
+485	Simulated backcross to dog	
+486	Simulated backcross to dog	
+487	Simulated backcross to dog	
+488	Simulated backcross to dog	
+489	Simulated backcross to dog	
+490	Simulated backcross to dog	
+491	Simulated backcross to dog	
+492	Simulated backcross to dog	
+493	Simulated backcross to dog	
+494	Simulated backcross to dog	
+495	Simulated backcross to dog	
+496	Simulated backcross to dog	
+497	Simulated backcross to dog	
+498	Simulated backcross to dog	
+499	Simulated backcross to dog	
+500	Simulated backcross to dog	
+501	Simulated second backcross to wolf	
+502	Simulated second backcross to wolf	
+503	Simulated second backcross to wolf	
+504	Simulated second backcross to wolf	
+505	Simulated second backcross to wolf	
+506	Simulated second backcross to wolf	
+507	Simulated second backcross to wolf	
+508	Simulated second backcross to wolf	
+509	Simulated second backcross to wolf	
+510	Simulated second backcross to wolf	
+511	Simulated second backcross to wolf	
+512	Simulated second backcross to wolf	
+513	Simulated second backcross to wolf	
+514	Simulated second backcross to wolf	
+515	Simulated second backcross to wolf	
+516	Simulated second backcross to wolf	
+517	Simulated second backcross to wolf	
+518	Simulated second backcross to wolf	
+519	Simulated second backcross to wolf	
+520	Simulated second backcross to wolf	
+521	Simulated second backcross to wolf	
+522	Simulated second backcross to wolf	
+523	Simulated second backcross to wolf	
+524	Simulated second backcross to wolf	
+525	Simulated second backcross to wolf	
+526	Simulated second backcross to wolf	
+527	Simulated second backcross to wolf	
+528	Simulated second backcross to wolf	
+529	Simulated second backcross to wolf	
+530	Simulated second backcross to wolf	
+531	Simulated second backcross to wolf	
+532	Simulated second backcross to wolf	
+533	Simulated second backcross to wolf	
+534	Simulated second backcross to wolf	
+535	Simulated second backcross to wolf	
+536	Simulated second backcross to wolf	
+537	Simulated second backcross to wolf	
+538	Simulated second backcross to wolf	
+539	Simulated second backcross to wolf	
+540	Simulated second backcross to wolf	
+541	Simulated second backcross to wolf	
+542	Simulated second backcross to wolf	
+543	Simulated second backcross to wolf	
+544	Simulated second backcross to wolf	
+545	Simulated second backcross to wolf	
+546	Simulated second backcross to wolf	
+547	Simulated second backcross to wolf	
+548	Simulated second backcross to wolf	
+549	Simulated second backcross to wolf	
+550	Simulated second backcross to wolf	
+551	Simulated second backcross to wolf	
+552	Simulated second backcross to wolf	
+553	Simulated second backcross to wolf	
+554	Simulated second backcross to wolf	
+555	Simulated second backcross to wolf	
+556	Simulated second backcross to wolf	
+557	Simulated second backcross to wolf	
+558	Simulated second backcross to wolf	
+559	Simulated second backcross to wolf	
+560	Simulated second backcross to wolf	
+561	Simulated second backcross to wolf	
+562	Simulated second backcross to wolf	
+563	Simulated second backcross to wolf	
+564	Simulated second backcross to wolf	
+565	Simulated second backcross to wolf	
+566	Simulated second backcross to wolf	
+567	Simulated second backcross to wolf	
+568	Simulated second backcross to wolf	
+569	Simulated second backcross to wolf	
+570	Simulated second backcross to wolf	
+571	Simulated second backcross to wolf	
+572	Simulated second backcross to wolf	
+573	Simulated second backcross to wolf	
+574	Simulated second backcross to wolf	
+575	Simulated second backcross to wolf	
+576	Simulated second backcross to wolf	
+577	Simulated second backcross to wolf	
+578	Simulated second backcross to wolf	
+579	Simulated second backcross to wolf	
+580	Simulated second backcross to wolf	
+581	Simulated second backcross to wolf	
+582	Simulated second backcross to wolf	
+583	Simulated second backcross to wolf	
+584	Simulated second backcross to wolf	
+585	Simulated second backcross to wolf	
+586	Simulated second backcross to wolf	
+587	Simulated second backcross to wolf	
+588	Simulated second backcross to wolf	
+589	Simulated second backcross to wolf	
+590	Simulated second backcross to wolf	
+591	Simulated second backcross to wolf	
+592	Simulated second backcross to wolf	
+593	Simulated second backcross to wolf	
+594	Simulated second backcross to wolf	
+595	Simulated second backcross to wolf	
+596	Simulated second backcross to wolf	
+597	Simulated second backcross to wolf	
+598	Simulated second backcross to wolf	
+599	Simulated second backcross to wolf	
+600	Simulated second backcross to wolf	
+601	Simulated second backcross to dog	
+602	Simulated second backcross to dog	
+603	Simulated second backcross to dog	
+604	Simulated second backcross to dog	
+605	Simulated second backcross to dog	
+606	Simulated second backcross to dog	
+607	Simulated second backcross to dog	
+608	Simulated second backcross to dog	
+609	Simulated second backcross to dog	
+610	Simulated second backcross to dog	
+611	Simulated second backcross to dog	
+612	Simulated second backcross to dog	
+613	Simulated second backcross to dog	
+614	Simulated second backcross to dog	
+615	Simulated second backcross to dog	
+616	Simulated second backcross to dog	
+617	Simulated second backcross to dog	
+618	Simulated second backcross to dog	
+619	Simulated second backcross to dog	
+620	Simulated second backcross to dog	
+621	Simulated second backcross to dog	
+622	Simulated second backcross to dog	
+623	Simulated second backcross to dog	
+624	Simulated second backcross to dog	
+625	Simulated second backcross to dog	
+626	Simulated second backcross to dog	
+627	Simulated second backcross to dog	
+628	Simulated second backcross to dog	
+629	Simulated second backcross to dog	
+630	Simulated second backcross to dog	
+631	Simulated second backcross to dog	
+632	Simulated second backcross to dog	
+633	Simulated second backcross to dog	
+634	Simulated second backcross to dog	
+635	Simulated second backcross to dog	
+636	Simulated second backcross to dog	
+637	Simulated second backcross to dog	
+638	Simulated second backcross to dog	
+639	Simulated second backcross to dog	
+640	Simulated second backcross to dog	
+641	Simulated second backcross to dog	
+642	Simulated second backcross to dog	
+643	Simulated second backcross to dog	
+644	Simulated second backcross to dog	
+645	Simulated second backcross to dog	
+646	Simulated second backcross to dog	
+647	Simulated second backcross to dog	
+648	Simulated second backcross to dog	
+649	Simulated second backcross to dog	
+650	Simulated second backcross to dog	
+651	Simulated second backcross to dog	
+652	Simulated second backcross to dog	
+653	Simulated second backcross to dog	
+654	Simulated second backcross to dog	
+655	Simulated second backcross to dog	
+656	Simulated second backcross to dog	
+657	Simulated second backcross to dog	
+658	Simulated second backcross to dog	
+659	Simulated second backcross to dog	
+660	Simulated second backcross to dog	
+661	Simulated second backcross to dog	
+662	Simulated second backcross to dog	
+663	Simulated second backcross to dog	
+664	Simulated second backcross to dog	
+665	Simulated second backcross to dog	
+666	Simulated second backcross to dog	
+667	Simulated second backcross to dog	
+668	Simulated second backcross to dog	
+669	Simulated second backcross to dog	
+670	Simulated second backcross to dog	
+671	Simulated second backcross to dog	
+672	Simulated second backcross to dog	
+673	Simulated second backcross to dog	
+674	Simulated second backcross to dog	
+675	Simulated second backcross to dog	
+676	Simulated second backcross to dog	
+677	Simulated second backcross to dog	
+678	Simulated second backcross to dog	
+679	Simulated second backcross to dog	
+680	Simulated second backcross to dog	
+681	Simulated second backcross to dog	
+682	Simulated second backcross to dog	
+683	Simulated second backcross to dog	
+684	Simulated second backcross to dog	
+685	Simulated second backcross to dog	
+686	Simulated second backcross to dog	
+687	Simulated second backcross to dog	
+688	Simulated second backcross to dog	
+689	Simulated second backcross to dog	
+690	Simulated second backcross to dog	
+691	Simulated second backcross to dog	
+692	Simulated second backcross to dog	
+693	Simulated second backcross to dog	
+694	Simulated second backcross to dog	
+695	Simulated second backcross to dog	
+696	Simulated second backcross to dog	
+697	Simulated second backcross to dog	
+698	Simulated second backcross to dog	
+699	Simulated second backcross to dog	
+700	Simulated second backcross to dog	

@@ -1,0 +1,25 @@
+index	name	Wolf	Dog	F1	F2	BC wolf	BC dog	animal	flag	newhybrids_class	highest_probability	hybrid_probability	harmoinen_call
+201	NoName	1	0	0	0	0	0	W211213		Wolf	1	0	Pure
+202	NoName	1	0	0	0	0	0	W211224		Wolf	1	0	Pure
+203	NoName	0	0	2e-5	8.7e-4	0.99911	0	W211233		BC wolf	0.99911	1	Hybrid
+204	NoName	1	0	0	0	0	0	W211255		Wolf	1	0	Pure
+205	NoName	1	0	0	0	0	0	W211287		Wolf	1	0	Pure
+206	NoName	0.99798	0	0	0	0.00202	0	W211293		Wolf	0.99798	0.00202	Pure
+207	NoName	1	0	0	0	0	0	W215154		Wolf	1	0	Pure
+208	NoName	1	0	0	0	0	0	W215207.r1		Wolf	1	0	Pure
+209	NoName	1	0	0	0	0	0	W215208.r1		Wolf	1	0	Pure
+210	NoName	0.98637	0	0	0	0.01362	0	W215210.r1		Wolf	0.98637	0.01362	Pure
+211	NoName	0.99996	0	0	0	4e-5	0	W215214		Wolf	0.99996	4e-5	Pure
+212	NoName	1	0	0	0	0	0	W215214.r1		Wolf	1	0	Pure
+213	NoName	1	0	0	0	0	0	W215217		Wolf	1	0	Pure
+214	NoName	1	0	0	0	0	0	W215220		Wolf	1	0	Pure
+215	NoName	1	0	0	0	0	0	W215220.r1		Wolf	1	0	Pure
+216	NoName	1	0	0	0	0	0	W215222		Wolf	1	0	Pure
+217	NoName	0.99999	0	0	0	1e-5	0	W215222.r1		Wolf	0.99999	1e-5	Pure
+218	NoName	0.99949	0	0	0	5.1e-4	0	W215231		Wolf	0.99949	5.1e-4	Pure
+219	NoName	0	0.03818	0.00173	0.06388	0	0.89621	W215232		BC dog	0.89621	0.9618199999999999	Hybrid
+220	NoName	0.99883	0	0	0	0.00117	0	W215273		Wolf	0.99883	0.00117	Pure
+221	NoName	0	0.99998	0	0	0	2e-5	W215294		Dog	0.99998	2e-5	Pure
+222	NoName	1	0	0	0	0	0	W215511		Wolf	1	0	Pure
+223	NoName	1	0	0	0	0	0	W215538		Wolf	1	0	Pure
+224	NoName	1	0	0	0	0	0	W215539.r1		Wolf	1	0	Pure

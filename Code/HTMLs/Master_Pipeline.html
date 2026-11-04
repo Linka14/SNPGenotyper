@@ -3473,17 +3473,22 @@ settings.</p>
 <span id="cb26-3"><a href="#cb26-3" tabindex="-1"></a>  <span class="at">gq_cutoff =</span> <span class="dv">20</span>, <span class="co"># Cutoff for genotypes, I could use 25 as previously calculated in the genotypes cutoff plot</span></span>
 <span id="cb26-4"><a href="#cb26-4" tabindex="-1"></a></span>
 <span id="cb26-5"><a href="#cb26-5" tabindex="-1"></a>  <span class="co"># Simulated reference animals from the primer panel with allele frequencies</span></span>
-<span id="cb26-6"><a href="#cb26-6" tabindex="-1"></a>  <span class="at">wolf_frequency_column =</span> <span class="st">&quot;FreqWOLF_all&quot;</span>, <span class="co"># FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT or FreqWOLF_IB</span></span>
-<span id="cb26-7"><a href="#cb26-7" tabindex="-1"></a>  <span class="at">dog_frequency_column =</span> <span class="st">&quot;FreqDOG&quot;</span>,</span>
-<span id="cb26-8"><a href="#cb26-8" tabindex="-1"></a>  <span class="at">n_reference_wolves =</span> <span class="dv">300</span>,</span>
-<span id="cb26-9"><a href="#cb26-9" tabindex="-1"></a>  <span class="at">n_reference_dogs =</span> <span class="dv">300</span>,</span>
-<span id="cb26-10"><a href="#cb26-10" tabindex="-1"></a>  <span class="at">n_simulated_per_hybrid_class =</span> <span class="dv">300</span>, <span class="co"># for F1, first and second backcrosses</span></span>
-<span id="cb26-11"><a href="#cb26-11" tabindex="-1"></a>  <span class="at">simulation_seed =</span> <span class="dv">1</span></span>
-<span id="cb26-12"><a href="#cb26-12" tabindex="-1"></a>)</span></code></pre></div>
+<span id="cb26-6"><a href="#cb26-6" tabindex="-1"></a>  <span class="at">reference_source =</span> <span class="st">&quot;real&quot;</span>, <span class="co"># or &quot;simulated&quot;</span></span>
+<span id="cb26-7"><a href="#cb26-7" tabindex="-1"></a>  <span class="at">reference_ped_path =</span> <span class="st">&quot;Data/Supporting_data/Reference_populations/GTIC-D-20-00312R1.ped&quot;</span>, <span class="co"># reference pops from Dryad</span></span>
+<span id="cb26-8"><a href="#cb26-8" tabindex="-1"></a>  <span class="at">reference_map_path =</span> <span class="st">&quot;Data/Supporting_data/Reference_populations/GTIC-D-20-00312R1.map&quot;</span>,</span>
+<span id="cb26-9"><a href="#cb26-9" tabindex="-1"></a>  <span class="at">reference_wolf_groups =</span> <span class="fu">c</span>(<span class="st">&quot;wolGer&quot;</span>, <span class="st">&quot;wolRom&quot;</span>, <span class="st">&quot;wolFin&quot;</span>, <span class="st">&quot;wolRus&quot;</span>), <span class="co"># EastEuropean sub populations</span></span>
+<span id="cb26-10"><a href="#cb26-10" tabindex="-1"></a>  <span class="at">reference_dog_groups =</span> <span class="fu">c</span>(<span class="st">&quot;dog_Illumina&quot;</span>, <span class="st">&quot;dog_nonpedigree&quot;</span>),</span>
+<span id="cb26-11"><a href="#cb26-11" tabindex="-1"></a>  <span class="at">wolf_frequency_column =</span> <span class="st">&quot;FreqWOLF_EastEurope&quot;</span>, <span class="co"># FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT or FreqWOLF_IB</span></span>
+<span id="cb26-12"><a href="#cb26-12" tabindex="-1"></a>  <span class="at">dog_frequency_column =</span> <span class="st">&quot;FreqDOG&quot;</span>,</span>
+<span id="cb26-13"><a href="#cb26-13" tabindex="-1"></a>  <span class="at">n_reference_wolves =</span> <span class="dv">186</span>, <span class="co"># or 186 for &quot;real&quot; setting (that is the max number of wolves for EastEuropean subpops)</span></span>
+<span id="cb26-14"><a href="#cb26-14" tabindex="-1"></a>  <span class="at">n_reference_dogs =</span> <span class="dv">186</span>,</span>
+<span id="cb26-15"><a href="#cb26-15" tabindex="-1"></a>  <span class="at">n_simulated_per_hybrid_class =</span> <span class="dv">186</span>, <span class="co"># for F1, first and second backcrosses</span></span>
+<span id="cb26-16"><a href="#cb26-16" tabindex="-1"></a>  <span class="at">simulation_seed =</span> <span class="dv">1</span></span>
+<span id="cb26-17"><a href="#cb26-17" tabindex="-1"></a>)</span></code></pre></div>
 <div class="sourceCode" id="cb27"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" tabindex="-1"></a>timing_stage_08 <span class="ot">&lt;-</span> <span class="fu">run_stage</span>(<span class="st">&quot;Code/Rmd_Stages/08_Ancestry_Analysis.Rmd&quot;</span>,</span>
 <span id="cb27-2"><a href="#cb27-2" tabindex="-1"></a>  <span class="fu">c</span>(shared_settings, settings_05_bayesian, settings_08_ancestry_validation), <span class="at">run =</span> run_08_ancestry_validation)</span></code></pre></div>
-<pre><code>STARTED: Code/Rmd_Stages/08_Ancestry_Analysis.Rmd at 11:44</code></pre>
-<pre><code>FINISHED: Code/Rmd_Stages/08_Ancestry_Analysis.Rmd in 0.5 min</code></pre>
+<pre><code>STARTED: Code/Rmd_Stages/08_Ancestry_Analysis.Rmd at 15:34</code></pre>
+<pre><code>FINISHED: Code/Rmd_Stages/08_Ancestry_Analysis.Rmd in 0.3 min</code></pre>
 </div>
 <div id="summary" class="section level2">
 <h2>Summary</h2>
@@ -3491,7 +3496,7 @@ settings.</p>
 <span id="cb30-2"><a href="#cb30-2" tabindex="-1"></a>stage_timings <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(timing_stage_01, timing_stage_02, timing_stage_03, timing_stage_04, timing_stage_05, timing_stage_06, timing_stage_07, timing_stage_08)</span>
 <span id="cb30-3"><a href="#cb30-3" tabindex="-1"></a><span class="fu">kable</span>(stage_timings, <span class="at">caption =</span> <span class="fu">sprintf</span>(<span class="st">&quot;Total: %.1f min&quot;</span>, <span class="fu">sum</span>(stage_timings<span class="sc">$</span>minutes))) <span class="co">#prepares it for better looking output in HTML</span></span></code></pre></div>
 <table>
-<caption>Total: 0.5 min</caption>
+<caption>Total: 0.3 min</caption>
 <thead>
 <tr class="header">
 <th align="left">stage</th>
@@ -3501,7 +3506,7 @@ settings.</p>
 <tbody>
 <tr class="odd">
 <td align="left">08_Ancestry_Analysis.Rmd</td>
-<td align="right">0.5</td>
+<td align="right">0.3</td>
 </tr>
 </tbody>
 </table>

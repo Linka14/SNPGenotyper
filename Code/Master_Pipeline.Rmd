@@ -302,11 +302,16 @@ settings_08_ancestry_validation <- list(
   gq_cutoff = 20, # Cutoff for genotypes, I could use 25 as previously calculated in the genotypes cutoff plot
 
   # Simulated reference animals from the primer panel with allele frequencies
-  wolf_frequency_column = "FreqWOLF_all", # FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT or FreqWOLF_IB
+  reference_source = "real", # or "simulated"
+  reference_ped_path = "Data/Supporting_data/Reference_populations/GTIC-D-20-00312R1.ped", # reference pops from Dryad
+  reference_map_path = "Data/Supporting_data/Reference_populations/GTIC-D-20-00312R1.map",
+  reference_wolf_groups = c("wolGer", "wolRom", "wolFin", "wolRus"), # EastEuropean sub populations
+  reference_dog_groups = c("dog_Illumina", "dog_nonpedigree"),
+  wolf_frequency_column = "FreqWOLF_EastEurope", # FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT or FreqWOLF_IB
   dog_frequency_column = "FreqDOG",
-  n_reference_wolves = 300,
-  n_reference_dogs = 300,
-  n_simulated_per_hybrid_class = 300, # for F1, first and second backcrosses
+  n_reference_wolves = 186, # or 186 for "real" setting (that is the max number of wolves for EastEuropean subpops)
+  n_reference_dogs = 186,
+  n_simulated_per_hybrid_class = 186, # for F1, first and second backcrosses
   simulation_seed = 1
 )
 ```
