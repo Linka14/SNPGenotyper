@@ -3421,7 +3421,7 @@ settings.</p>
 <span id="cb17-7"><a href="#cb17-7" tabindex="-1"></a>  <span class="co"># Genotype prior</span></span>
 <span id="cb17-8"><a href="#cb17-8" tabindex="-1"></a>  <span class="at">prior_type =</span> <span class="st">&quot;ancestry&quot;</span>, <span class="co"># &quot;flat&quot; = 1/3 each genotype, &quot;het_share&quot; = one heterozygote share for every pair, &quot;hwe&quot; = locus specific HWE priors from the panel frequencies or ancestry  </span></span>
 <span id="cb17-9"><a href="#cb17-9" tabindex="-1"></a>  <span class="at">prior_het_share =</span> <span class="fl">0.15</span>, <span class="co"># only used when prior_type == &quot;het_share&quot;</span></span>
-<span id="cb17-10"><a href="#cb17-10" tabindex="-1"></a>  <span class="at">prior_population =</span> <span class="st">&quot;FreqWOLF_all&quot;</span>, <span class="co"># only used when prior_type is set to &quot;hwe&quot;: FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT, FreqWOLF_IB, FreqDOG</span></span>
+<span id="cb17-10"><a href="#cb17-10" tabindex="-1"></a>  <span class="at">prior_population =</span> <span class="st">&quot;FreqWOLF_EastEurope&quot;</span>, <span class="co"># only used when prior_type is set to &quot;hwe&quot;: FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT, FreqWOLF_IB, FreqDOG</span></span>
 <span id="cb17-11"><a href="#cb17-11" tabindex="-1"></a>  <span class="at">prior_floor =</span> <span class="fl">0.001</span>, <span class="co"># floors allele frequency so no genotype gets an exact-zero prior</span></span>
 <span id="cb17-12"><a href="#cb17-12" tabindex="-1"></a>  <span class="at">ancestry_prior_shape =</span> <span class="dv">1</span>, <span class="co"># 1 is uniform Beta(1, 1) prior, doesnt assume anything</span></span>
 <span id="cb17-13"><a href="#cb17-13" tabindex="-1"></a>  <span class="at">phi_hom_structure =</span> <span class="st">&quot;shared&quot;</span>, <span class="co">#&quot;shared&quot;, &quot;locus&quot;, &quot;sample&quot;, &quot;locus_sample&quot;</span></span>
@@ -3487,7 +3487,7 @@ settings.</p>
 <span id="cb26-17"><a href="#cb26-17" tabindex="-1"></a>)</span></code></pre></div>
 <div class="sourceCode" id="cb27"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" tabindex="-1"></a>timing_stage_08 <span class="ot">&lt;-</span> <span class="fu">run_stage</span>(<span class="st">&quot;Code/Rmd_Stages/08_Ancestry_Analysis.Rmd&quot;</span>,</span>
 <span id="cb27-2"><a href="#cb27-2" tabindex="-1"></a>  <span class="fu">c</span>(shared_settings, settings_05_bayesian, settings_08_ancestry_validation), <span class="at">run =</span> run_08_ancestry_validation)</span></code></pre></div>
-<pre><code>STARTED: Code/Rmd_Stages/08_Ancestry_Analysis.Rmd at 15:34</code></pre>
+<pre><code>STARTED: Code/Rmd_Stages/08_Ancestry_Analysis.Rmd at 22:28</code></pre>
 <pre><code>FINISHED: Code/Rmd_Stages/08_Ancestry_Analysis.Rmd in 0.3 min</code></pre>
 </div>
 <div id="summary" class="section level2">

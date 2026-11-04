@@ -39,7 +39,7 @@ params:
   error_rate: 0.08
   prior_type: "ancestry" # run with wolf ancestry for later comparison
   prior_het_share: 0.15
-  prior_population: "FreqWOLF_all"
+  prior_population: "FreqWOLF_EastEurope"
   prior_floor: 0.001
   ancestry_prior_shape: 1
   phi_hom_structure: "shared"
@@ -49,16 +49,16 @@ params:
   gq_cutoff: 20 # Stan genotypes with lower GQ are filtered out and set as missing
 
   # Simulated reference animals
-  reference_source: "simulated" # "simulated" or "real"
+  reference_source: "real" # "simulated" or "real"
   reference_ped_path: "Data/Supporting_data/Reference_populations/GTIC-D-20-00312R1.ped"
   reference_map_path: "Data/Supporting_data/Reference_populations/GTIC-D-20-00312R1.map"
   reference_wolf_groups: ["wolGer", "wolRom", "wolFin", "wolRus"] # Central and East European wolves, 186 animals
   reference_dog_groups: ["dog_Illumina", "dog_nonpedigree"] # 299 dogs
-  wolf_frequency_column: "FreqWOLF_all" # or FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT or FreqWOLF_IB
+  wolf_frequency_column: "FreqWOLF_EastEurope" # or FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT or FreqWOLF_IB
   dog_frequency_column: "FreqDOG" # dog freq from primer panel
-  n_reference_wolves: 300 # when using real reference population all should be 186 (max number of reference wolves)
-  n_reference_dogs: 300
-  n_simulated_per_hybrid_class: 300 # number of F1, backcross to wolf, backcross to dog
+  n_reference_wolves: 186 # when using real reference population all should be 186 (max number of reference wolves)
+  n_reference_dogs: 186
+  n_simulated_per_hybrid_class: 186 # number of F1, backcross to wolf, backcross to dog
   simulation_seed: 1
 ---
 
@@ -482,7 +482,8 @@ ggsave(file.path(ancestry_out_dir, "ancestry_panel.pdf"), ancestry_panel, width 
 This chunk contains data prep for NewHybrids software with correct genotype codes per sample. It computes posterior probability for all six classes with Harmoinen et al (2021) research paper in mind. 100 simulated wolves and dogs are inputed as known pure parents (z0 for wolves, z1 for dogs). My samples use the flat prior as previious PCA analysis with same GQ cutoff.
 
 Command used to run NewHybrids from the folder: 
-`~/Tools/newhybrids/bin/OSX/newhybsng -d newhybrids_input.txt --burn-in 100000 --num-sweeps 500000 --theta-prior Jeffreys --pi-prior Jeffreys -s 1 2 --no-gui`
+`~/Tools/newhybrids/bin/OSX/newhybsng -d newhybrids_input.txt --burn-in 100000`
+`--num-sweeps 500000 --theta-prior Jeffreys --pi-prior Jeffreys -s 1 2 --no-gui`
 
 ```{r NewHybrids_Input}
 # Number of simulated wolves and dogs as pure parents, reference point for NewHybrids
@@ -654,6 +655,151 @@ ggsave(file.path(newhybrids_dir, "newhybrids_classes.pdf"), p_newhybrids, width 
 
 
 
+## STRUCTURE input data preparation
+This chunk contains input data prep for STRUCTURE analysis. Specific allele strucutre input for all 33 loci and mainparams and extraparams file with mainly defualt values except for settings which are relavant to analysis from Harmoinen et al. Run with admixutre model, correlated allele freq, 50000 burn in and 500000 repetitions, and 95 % interval (ANCESTPINT) so its later comparable to my Bayesian ancestry run, two clusters (k = 2, for wolf and dog) with fixed seed.
+
+Command for running STRUCTURE:
+
+`for run in 1 2 3 4 5; do`
+ `~/Tools/structure/structure_kernel_src/structure -m mainparams -e extraparams`
+ `-K 2 -D $run -o structure_K2_run$run > log_run$run.txt &`
+ `done; wait`
+
+```{r STRUCTURE_Input}
+# New output paths for STRUCTURE
+structure_dir <- file.path(ancestry_out_dir, "STRUCTURE")
+dir.create(structure_dir, showWarnings = FALSE)
+
+# All the parent animals and samples combined (186 reference wolves and dogs and 24 samples)
+structure_copies <- rbind(parent_copies, sample_copies)
+# Makes names for reference animals wolf_1 to wolf_186 and so on, my samples keep id
+structure_labels <- c(paste0("wolf_", seq_len(n_reference_wolves)), paste0("dog_", seq_len(n_reference_dogs)), newhybrids_key$animal[newhybrids_key$flag == ""])
+# Makes 1 (wolf), 2 (dog), 3 (sample) labels for STR  
+structure_population <- rep(1:3, c(n_reference_wolves, n_reference_dogs, nrow(sample_copies)))
+
+# Converts it into allele input type for STRUCTURE (if to copies of allele 1, then its converted to 1 meaning HM for allele 1)
+first_allele <- ifelse(is.na(structure_copies), -9, ifelse(structure_copies >= 1, 1, 2))
+second_allele <- ifelse(is.na(structure_copies), -9, ifelse(structure_copies == 2, 1, 2))
+
+# Binds two column for both alleles per locus in pca_loci order
+structure_alleles <- cbind(first_allele, second_allele)[, order(rep(seq_along(pca_loci), 2))]
+
+# writes input file for STRUCTURE with header names
+writeLines(c(paste(pca_loci, collapse = " "), paste(structure_labels, structure_population, apply(structure_alleles, 1, paste, collapse = " "))), file.path(structure_dir, "structure_input.txt"))
+
+# Same settings as in Harmoinen et al. run with admixutre model, correlated allele freq, 50000 burn in and 500000 repetitions, and 95 % interval (ANCESTPINT) so its later comparable to my Bayesian ancestry run, two clusters (k = 2, for wolf and dog) with fixed seed. All other param are mainly defualts.
+structure_mainparams <- c(MAXPOPS = "2", BURNIN = "50000", NUMREPS = "500000", INFILE = "structure_input.txt", 
+                          OUTFILE = "structure_output", NUMINDS = nrow(structure_alleles), NUMLOCI = length(pca_loci), 
+                          PLOIDY = "2", MISSING = "-9", ONEROWPERIND = "1", LABEL = "1", POPDATA = "1", POPFLAG = "0", 
+                          LOCDATA = "0", PHENOTYPE = "0", EXTRACOLS = "0", MARKERNAMES = "1", RECESSIVEALLELES = "0", 
+                          MAPDISTANCES = "0", PHASED = "0", PHASEINFO = "0", MARKOVPHASE = "0", NOTAMBIGUOUS = "-999")
+
+structure_extraparams <- c(NOADMIX = "0", LINKAGE = "0", USEPOPINFO = "0", LOCPRIOR = "0", FREQSCORR = "1", ONEFST = "0", 
+                           INFERALPHA = "1", POPALPHAS = "0", ALPHA = "1.0", INFERLAMBDA = "0", POPSPECIFICLAMBDA = "0", 
+                           LAMBDA = "1.0", FPRIORMEAN = "0.01", FPRIORSD = "0.05", UNIFPRIORALPHA = "1", ALPHAMAX = "10.0",
+                           ALPHAPRIORA = "1.0", ALPHAPRIORB = "2.0", LOG10RMIN = "-4.0", LOG10RMAX = "1.0", LOG10RPROPSD = "0.1",
+                           LOG10RSTART = "-2.0", GENSBACK = "2", MIGRPRIOR = "0.01", PFROMPOPFLAGONLY = "0", LOCISPOP = "0",
+                           LOCPRIORINIT = "1.0", MAXLOCPRIOR = "20.0", PRINTNET = "1", PRINTLAMBDA = "1", PRINTQSUM = "1", 
+                           SITEBYSITE = "0", PRINTQHAT = "0", UPDATEFREQ = "10000", PRINTLIKES = "0", INTERMEDSAVE = "0", 
+                           ECHODATA = "1", ANCESTDIST = "1", NUMBOXES = "1000", ANCESTPINT = "0.95", COMPUTEPROB = "1", 
+                           ADMBURNIN = "500", ALPHAPROPSD = "0.025", STARTATPOPINFO = "0", RANDOMIZE = "0", SEED = "1", 
+                           METROFREQ = "10", REPORTHITRATE = "0")
+# Saves params for STR
+writeLines(paste("#define", names(structure_mainparams), structure_mainparams), file.path(structure_dir, "mainparams"))
+writeLines(paste("#define", names(structure_extraparams), structure_extraparams), file.path(structure_dir, "extraparams"))
+```
+
+
+
+## STRUCTURE Results
+This chunk prepares STRUCTURE results, makes a couple of plots and compares it with my Bayesian ancestry run results.
+
+```{r STRUCTURE_Results, eval = length(list.files(file.path(ancestry_out_dir, "STRUCTURE"), pattern = "_f$")) > 0}
+
+#Reads all output files from structure saves full full path fo read lines later
+structure_files <- list.files(structure_dir, pattern = "^structure_K2_run[0-9]+_f$", full.names = TRUE)
+
+# Running function once per file, reads the lines, one row per animal, finds labels, % of loci missing, population, q for both cluster and lower and upper limit of the 95 % interval, also and attaches file name
+structure_runs <- bind_rows(lapply(structure_files, function(file_name) {
+  readLines(file_name, warn = FALSE) %>% 
+    grep("\\([0-9]+\\)\\s+[0-9]+\\s+:", ., value = TRUE) %>%
+    gsub("[(),:]", " ", .) %>%
+    read.table(text = ., col.names = c("number", "label", "missing", "population", paste0("X", 1:6))) %>%
+    mutate(run = basename(file_name))
+}))
+
+# This part solves the label swtiching from STRUCTURE, it doesn't know which one is wolf just assigns 1 or 0. Based on that is saves the right q and right lower and upper limits.
+structure_runs <- structure_runs %>%
+  mutate(wolf_is_cluster_1 = mean(X1[startsWith(label, "wolf_")]) > 0.5, .by = run) %>%
+  transmute(run, label, structure_q = ifelse(wolf_is_cluster_1, X1, X2),
+            structure_low = ifelse(wolf_is_cluster_1, X3, X5), structure_high = ifelse(wolf_is_cluster_1, X4, X6))
+
+# Mean over the runs as in the referenced paper, grouped by label
+structure_summary <- structure_runs %>%
+  summarise(run_sd = sd(structure_q), runs = n(), structure_q = mean(structure_q), structure_low = mean(structure_low), 
+            structure_high = mean(structure_high), .by = label) %>%
+  mutate(group = factor(case_when(startsWith(label, "wolf_") ~ "Reference wolves",
+                                  startsWith(label, "dog_") ~ "Reference dogs", 
+                                  TRUE ~ "Samples"), levels = c("Reference wolves", "Samples", "Reference dogs")))
+
+# Simple ummary table grouped by group (smaples, dogs, wolves)
+structure_groups <- summarise(structure_summary, animals = n(), mean_q = mean(structure_q), lowest_q = min(structure_q), highest_q = max(structure_q), .by = group)
+
+kable(structure_groups, digits = 3, col.names = c("Group", "Animals", "Mean wolf q", "Lowest", "Highest"),
+      caption = sprintf("STRUCTURE wolf q (K = 2, mean of %d runs)", length(structure_files)))
+
+# COmbines results for 24 samples with my Bayesian ancestry run results
+structure_samples <- structure_summary %>%
+  inner_join(select(stan_scores, sample, wolf_ancestry), by = c("label" = "sample")) %>%
+  select(sample = label, structure_q, structure_low, structure_high, run_sd, wolf_ancestry) %>%
+  arrange(structure_q)
+
+write_tsv(structure_samples, file.path(structure_dir, "structure_sample_q.tsv"))
+
+# Summary table for html
+structure_sample_table <- structure_samples %>%
+  mutate(structure = sprintf("%.3f (%.3f-%.3f)", structure_q, structure_low, structure_high)) %>%
+  select(sample, structure, run_sd, wolf_ancestry)
+
+kable(structure_sample_table, digits = 3,
+      col.names = c("Sample", "STRUCTURE wolf q (95 % interval)", "SD between runs", "Bayesian wolf ancestry (05)"),
+      caption = sprintf("STRUCTURE and Bayesian wolf ancestry, Pearson r = %.3f", cor(structure_samples$structure_q, structure_samples$wolf_ancestry)))
+
+### 1. Plot, same classic stacked bar plot for STRUCTURE, faceted by group
+structure_order <- structure_summary$label[order(structure_summary$group, -structure_summary$structure_q)]
+structure_long <- bind_rows(transmute(structure_summary, label, group, part = "Wolf", q = structure_q),
+                            transmute(structure_summary, label, group, part = "Dog", q = 1 - structure_q))
+
+p_structure_bars <- ggplot(structure_long, aes(factor(label, levels = structure_order), q, fill = factor(part, levels = c("Wolf", "Dog")))) +
+  geom_col(width = 1) +
+  facet_grid(~ group, scales = "free_x") +
+  scale_fill_manual(values = short_colours[c("Wolf", "Dog")], name = NULL) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(title = "STRUCTURE ancestry of reference animals and samples (K = 2)", x = NULL, y = "Ancestry proportion (q)") +
+  panel_theme + 
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), panel.spacing = unit(3, "pt"),
+                      strip.background = element_blank(), strip.text = element_text(face = "bold"))
+p_structure_bars
+ggsave(file.path(structure_dir, "structure_barplot.png"), p_structure_bars, width = 16, height = 8, units = "cm", dpi = 300, bg = "white")
+ggsave(file.path(structure_dir, "structure_barplot.pdf"), p_structure_bars, width = 16, height = 8, units = "cm", device = cairo_pdf)
+
+### 2. Plot , wolf q from Bayes and STRUCTURE runs with error bars
+sample_q <- bind_rows(transmute(structure_samples, sample, method = "STRUCTURE (95 % interval)", q = structure_q, low = structure_low, high = structure_high), transmute(stan_scores, sample, method = "Bayesian model (95 % interval)", q = wolf_ancestry, low = wolf_ancestry_low, high = wolf_ancestry_high))
+
+p_structure_samples <- ggplot(sample_q, aes(q, factor(sample, levels = structure_samples$sample), colour = method)) +
+  geom_vline(xintercept = c(0.125, 0.25, 0.5, 0.75, 0.875), linetype = "dotted", colour = "grey60") +
+  geom_pointrange(aes(xmin = low, xmax = high), size = 0.15, position = position_dodge(width = 0.6)) +
+  scale_x_continuous(limits = c(0, 1), sec.axis = dup_axis(breaks = c(0.125, 0.25, 0.5, 0.75, 0.875), labels = c("BC2 dog", "BC dog", "F1", "BC wolf", "BC2 wolf"), name = NULL)) +
+  scale_colour_manual(values = c("#467378", "#C98A4E"), name = NULL) +
+  labs(title = "Wolf ancestry of the samples, STRUCTURE and Bayesian model", x = "Wolf ancestry (q)", y = NULL) +
+  panel_theme
+p_structure_samples
+ggsave(file.path(structure_dir, "structure_sample_q.png"), p_structure_samples, width = 16, height = 12.7, units = "cm", dpi = 300, bg = "white")
+ggsave(file.path(structure_dir, "structure_sample_q.pdf"), p_structure_samples, width = 16, height = 12.7, units = "cm", device = cairo_pdf)
+```
+
+
+
 ## Combined ancestry results
 This chunk produces a dataframe, side by side result for every sample using all the different methods which makes results easibly comparable. MEthods in question are my measured wolf ancestry from the Bayesian model, PC1, DAPC  and NewHybrids, 
 
@@ -711,6 +857,13 @@ p_ancestry_bars <- ggplot(bar_data, aes(sample, probability, fill = group)) +
 p_ancestry_bars
 ggsave(file.path(ancestry_out_dir, "ancestry_bar_panel.png"), p_ancestry_bars, width = 16, height = 22, units = "cm", dpi = 300, bg = "white")
 ggsave(file.path(ancestry_out_dir, "ancestry_bar_panel.pdf"), p_ancestry_bars, width = 16, height = 22, units = "cm", device = cairo_pdf)
+
+# Agreement table for replicate samples.
+replicate_pairs <- ancestry_summary %>%
+  mutate(animal = sub("\\.r1$", "", sample)) %>%
+  filter(n() > 1, .by = animal)
+kable(select(replicate_pairs, animal, sample, wolf_ancestry, dapc_class, newhybrids_class, harmoinen_call), digits = 2,
+      col.names = c("Animal", "Sample", "Wolf ancestry", "DAPC class", "NewHybrids class", "Call"), caption = "Ancestry of replicate samples of the same animal")
 ```
 
 
