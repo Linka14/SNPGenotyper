@@ -101,11 +101,6 @@ plot_font <- "Times New Roman"
 theme_set(theme_minimal(base_family = plot_font))
 ancestry_class_levels <- c("Wolf-like", "Backcross to wolf", "F1-like", "Backcross to dog", "Dog-like")
 ancestry_class_colours <- setNames(c("#467378", "#D9AF6B", "#C98A4E", "#AF6458", "#7E4038"), ancestry_class_levels)
-results_theme <- theme_minimal(base_family = plot_font, base_size = 11) +
-  theme(plot.title = element_text(face = "bold", hjust = 0.5),
-        plot.subtitle = element_text(hjust = 0.5, size = 9),
-        legend.position = "bottom",
-        panel.grid.minor = element_blank())
 
 # Paths for genotype and graphics outputs
 graphics_dir <- file.path("Results", dataset_name, "Graphics")
@@ -330,8 +325,7 @@ p_pca <- ggplot(simulated_scores, aes(PC1, PC2, colour = group)) +
 pc1_rows <- c(simulated_short_labels, "Samples")
 p_pc1 <- ggplot(simulated_scores, aes(PC1, factor(group, levels = pc1_rows), fill = group, colour = group)) +
   geom_boxplot(alpha = 0.4, outlier.shape = NA, width = 0.6) +
-  geom_point(data = stan_scores, aes(PC1, factor("Samples", levels = pc1_rows)), inherit.aes = FALSE, shape = 21, size = 1.8, colour = "black",
-             fill = ancestry_class_colours[stan_scores$ancestry_class], position = position_jitter(width = 0, height = 0.15, seed = 1)) +
+  geom_point(data = stan_scores, aes(PC1, factor("Samples", levels = pc1_rows)), inherit.aes = FALSE, shape = 21, size = 1.8, colour = "black", fill = ancestry_class_colours[stan_scores$ancestry_class], position = position_jitter(width = 0, height = 0.15, seed = 1)) +
   geom_text(data = candidate_scores, aes(PC1, factor("Samples", levels = pc1_rows), label = sample), inherit.aes = FALSE,
             vjust = -1.3, size = 2.6, family = plot_font) +
   scale_fill_manual(values = short_colours, guide = "none") + scale_colour_manual(values = short_colours, guide = "none") +
@@ -369,21 +363,21 @@ ggsave(file.path(ancestry_out_dir, "pca_pc1_against_stan_ancestry.pdf"), p_ances
 
 ## DAPC with the simulated groups as known classes
 
-This chunk runs the DAPC, its trained on simulated wolves and hybrids (850) and asks to which group each of my samples most likely belongs to. Genotypes are first reduced to PCA components (10) and then DAPC finds best ways to disciminate between those groups. Results are similar to class probabilities of NewHybrids. 
+This chunk runs the DAPC, its trained on simulated wolves and hybrids (2100) and asks to which group each of my samples most likely belongs to. Genotypes are first reduced to PCA components (10) and then DAPC finds best ways to disciminate between those groups. Results are similar to class probabilities of NewHybrids. 
 
 ```{r DAPC, fig.width = 6.3, fig.height = 5, out.width = "100%", dpi = 300}
 # Number principal components kept, if there are too many it can look better seperated than it actually is
-n_dapc_pca <- 5
+n_dapc_pca <- 10
 # All the simulated animals for the training set, group is known
 simulated_genind <- all_genind[which(is_simulated)]
 pop(simulated_genind) <- simulated_factor
 genotype_dapc <- dapc(simulated_genind, n.pca = n_dapc_pca, n.da = length(simulated_levels) - 1)
 
-# This part cheks how many PC components DAPC should keep, before it was hard coded as 10, now its actually cross validated. from 1 to 20 it trins DAPC on a set of simualted animals, and tests on the rest.
+# This part cheks how many PC components DAPC should keep, before it was hard coded as 10, now its actually cross validated. from 1 to 20 it trains DAPC on a set of simualted animals, and tests on the rest.
 simulated_allele_table <- tab(simulated_genind, freq = TRUE, NA.method = "mean") # converts to plain number table
 set.seed(simulation_seed)
 
-# the cross validation, 30 random splits for each PC count, 10 % of animals for testing
+# cross validation, 30 random splits for each PC count, 10 % of animals for testing
 dapc_cross_validation <- xvalDapc(simulated_allele_table, simulated_factor, n.pca = 1:20, n.rep = 30, training.set = 0.9, xval.plot = FALSE)
 dapc_cross_validation_table <- data.frame(n_pca = as.integer(names(dapc_cross_validation$`Mean Successful Assignment by Number of PCs of PCA`)), correct_percent = 100 * dapc_cross_validation$`Mean Successful Assignment by Number of PCs of PCA`)
 
@@ -392,7 +386,7 @@ kable(dapc_cross_validation_table, digits = 1, col.names = c("Principal componen
 
 # Share of simulated animals that are recognised as the same group from where they "come from"
 kable(data.frame(group = names(summary(genotype_dapc)$assign.per.pop), correct_percent = 100 * summary(genotype_dapc)$assign.per.pop),
-      digits = 1, col.names = c("Simulated group", "Assigned to own group (%)"), caption = "DAPC self-assignment of the simulated animals")
+      digits = 1, col.names = c("Simulated group", "Assigned to own group (%)"), caption = "DAPC self-assignment of the simulated animals", row.names = FALSE)
 
 # Membership probabilities of my 24 Stan (flat prior) genotypes samples
 stan_rows <- which(animal_group == "Stan genotypes")
@@ -405,7 +399,7 @@ dapc_membership <- data.frame(sample = sub(" \\| .*", "", indNames(all_genind)[s
 # Table of seven probability columns per sample
 write_tsv(dapc_membership, file.path(ancestry_out_dir, "dapc_sample_membership.tsv"))
 kable(arrange(dapc_membership[, c("sample", "assigned_group", "highest_probability")], assigned_group), digits = 3,
-      col.names = c("Sample", "DAPC group", "Membership probability"))
+      col.names = c("Sample", "DAPC group", "Membership probability"), row.names = FALSE)
 
 # Membership probabilities as stacked barplot
 dapc_order <- dapc_membership$sample[order(stan_scores$PC1[match(dapc_membership$sample, stan_scores$sample)])]
@@ -441,6 +435,242 @@ ancestry_panel
 
 ggsave(file.path(ancestry_out_dir, "ancestry_panel.png"), ancestry_panel, width = 29.7, height = 21, units = "cm", dpi = 300, bg = "white")
 ggsave(file.path(ancestry_out_dir, "ancestry_panel.pdf"), ancestry_panel, width = 29.7, height = 21, units = "cm", device = cairo_pdf)
+```
+
+
+
+## NewHybrids input data preparation
+This chunk contains data prep for NewHybrids software with correct genotype codes per sample. It computes posterior probability for all six classes with Harmoinen et al (2021) research paper in mind. 100 simulated wolves and dogs are inputed as known pure parents (z0 for wolves, z1 for dogs). My samples use the flat prior as previious PCA analysis with same GQ cutoff.
+
+Command used to run NewHybrids from the folder: 
+`~/Tools/newhybrids/bin/OSX/newhybsng -d newhybrids_input.txt --burn-in 100000 --num-sweeps 500000 --theta-prior Jeffreys --pi-prior Jeffreys -s 1 2 --no-gui`
+
+```{r NewHybrids_Input}
+# Number of simulated wolves and dogs as pure parents, reference point for NewHybrids
+n_newhybrids_reference <- 100 
+
+# New folder for NewHybrids inside ancestry analysis
+newhybrids_dir <- file.path(ancestry_out_dir, "NewHybrids")
+dir.create(newhybrids_dir, showWarnings = FALSE)
+
+# Takes the wide sample table wtih sample rows by method and column as loci. stan genotypes used only in pca_loci order and turns it into matrix
+stan_genotype_letters <- as.matrix(sample_table[sample_table$group == "Stan genotypes", pca_loci])
+
+# Count copies of allele 1 and write the number insdie each cell (0, 1, 2) with the help of allele1_letters. Same trick as before.
+allele1_letters <- matrix(rep(locus_alleles$allele1, each = nrow(stan_genotype_letters)), nrow = nrow(stan_genotype_letters))
+sample_copies <- (substr(stan_genotype_letters, 1, 1) == allele1_letters) + (substr(stan_genotype_letters, 2, 2) == allele1_letters)
+
+# Picks 100 refeerence animals from previously made 300 parent copies (wolves 1 -300, 301- 600 dogs ) and stack them
+reference_copies <- parent_copies[c(1:n_newhybrids_reference, n_reference_wolves + 1:n_newhybrids_reference), ]
+newhybrids_copies <- rbind(reference_copies, sample_copies)
+
+# Turns the 0, 1, 2 number into NewHyibrids input codes.
+newhybrids_genotypes <- ifelse(is.na(newhybrids_copies), "0", c("22", "12", "11")[newhybrids_copies + 1])
+# Adds flags, z0 for known pure animal from popualtion 0 (wolf), z1 for pure dogs, "" unkown, what the software estimates
+newhybrids_flags <- c(rep("z0", n_newhybrids_reference), rep("z1", n_newhybrids_reference), rep("", nrow(sample_copies)))
+newhybrids_lines <- paste(seq_len(nrow(newhybrids_genotypes)), newhybrids_flags, apply(newhybrids_genotypes, 1, paste, collapse = " "))
+
+# writes the file for NewHybrids
+writeLines(c(paste("NumIndivs", nrow(newhybrids_genotypes)), paste("NumLoci", length(pca_loci)), "Digits 1", "Format Lumped", "",
+             paste("LocusNames", paste(pca_loci, collapse = " ")), "", newhybrids_lines),
+           file.path(newhybrids_dir, "newhybrids_input.txt"))
+
+# Key to match the NewHybrids output rows back to the animals
+newhybrids_key <- data.frame(index = seq_len(nrow(newhybrids_genotypes)), animal = c(paste("Simulated wolf", 1:n_newhybrids_reference), paste("Simulated dog", 1:n_newhybrids_reference), sub(" \\| .*", "", sample_table$individual[sample_table$group == "Stan genotypes"])),flag = newhybrids_flags)
+
+write_tsv(newhybrids_key, file.path(newhybrids_dir, "newhybrids_key.tsv"))
+```
+
+
+
+## NewHybrids power input data preparation
+This part checks how sure you can be that the NewHybirds classification is correct, it test how much you can trust each class from my 24 samples. Same idea as in the Harmoinen et al. research paper. It saves into a separete folder, it tests 100 animals per 5 hybrid classes.
+
+```{r NewHybrids_Power_Input}
+# simulated hybrids per class as in referencer research paper
+n_power_per_class <- 100 
+power_classes <- c("Simulated F1", "Simulated backcross to wolf", "Simulated backcross to dog",
+                   "Simulated second backcross to wolf", "Simulated second backcross to dog")
+# Output path
+newhybrids_power_dir <- file.path(ancestry_out_dir, "NewHybrids_power")
+dir.create(newhybrids_power_dir, showWarnings = FALSE)
+
+# First 100 animals of every simulated hybrid class, copies of allele 1 read from the genind
+power_rows <- unlist(lapply(power_classes, function(group_name) which(animal_group == group_name)[1:n_power_per_class]))
+power_copies <- tab(all_genind[power_rows])[, paste0(pca_loci, ".", locus_alleles$allele1)]
+# Safety check my first run ran with only 50 animals accidentaly
+stopifnot(!anyNA(power_rows))
+
+# Same reference wolves (z0) and dogs (z1) as in the previous run, same file prep
+power_input_copies <- rbind(reference_copies, power_copies)
+power_genotypes <- ifelse(is.na(power_input_copies), "0", c("22", "12", "11")[power_input_copies + 1])
+power_flags <- c(rep("z0", n_newhybrids_reference), rep("z1", n_newhybrids_reference), rep("", nrow(power_copies)))
+power_lines <- paste(seq_len(nrow(power_genotypes)), power_flags, apply(power_genotypes, 1, paste, collapse = " "))
+
+writeLines(c(paste("NumIndivs", nrow(power_genotypes)), paste("NumLoci", length(pca_loci)), "Digits 1", "Format Lumped", "",
+             paste("LocusNames", paste(pca_loci, collapse = " ")), "", power_lines),
+           file.path(newhybrids_power_dir, "newhybrids_power_input.txt"))
+
+# Key with the true class of every animal
+power_key <- data.frame(index = seq_len(nrow(power_genotypes)),
+                        true_class = c(rep("Simulated wolf", n_newhybrids_reference),
+                                       rep("Simulated dog", n_newhybrids_reference), animal_group[power_rows]),
+                        flag = power_flags)
+write_tsv(power_key, file.path(newhybrids_power_dir, "newhybrids_power_key.tsv"))
+```
+
+
+
+## NewHybrids power results
+
+```{r NewHybrids_Power_Results, eval = file.exists(file.path(newhybrids_power_dir, "aa-PofZ.txt")), fig.width = 6.3, fig.height = 5, out.width = "100%", dpi = 300}
+# Class each simulated hybrid should get in NewHybrids. Second backcrosses grouped with backcrosses
+power_expected_class <- c("Simulated F1" = "F1", "Simulated backcross to wolf" = "BC wolf", "Simulated backcross to dog" = "BC dog",
+                          "Simulated second backcross to wolf" = "BC wolf", "Simulated second backcross to dog" = "BC dog")
+
+newhybrids_classes <- c("Wolf", "Dog", "F1", "F2", "BC wolf", "BC dog")
+# Reads the results, applies the true class from the key and filters for simulated hybrids
+power_results <- read.table(file.path(newhybrids_power_dir, "aa-PofZ.txt"), skip = 1, col.names = c("index", "name", newhybrids_classes), check.names = FALSE) %>%
+  left_join(power_key, by = "index") %>%
+  filter(flag == "") %>%
+  mutate(hybrid_probability = F1 + F2 + `BC wolf` + `BC dog`,
+         power_class = factor(simulated_short_labels[match(true_class, simulated_levels)], levels = simulated_short_labels[2:6]))
+
+# Expected probability each animal got the rigth class
+power_results$expected_probability <- as.matrix(power_results[, newhybrids_classes])[cbind(seq_len(nrow(power_results)), match(power_expected_class[power_results$true_class], newhybrids_classes))]
+
+# Share of correct class per simulated class
+power_summary <- power_results %>%
+  summarise(animals = n(), correct_percent = 100 * mean(expected_probability > 0.5), hybrid_percent = 100 * mean(hybrid_probability > 0.7), pure_percent = 100 * mean(pmax(Wolf, Dog) >= 0.5), .by = power_class) %>%
+  arrange(power_class)
+
+write_tsv(power_summary, file.path(newhybrids_power_dir, "newhybrids_power_summary.tsv"))
+kable(power_summary, digits = 1, row.names = FALSE,
+      col.names = c("Simulated class", "Animals", "Correct class (%, > 0.5)", "Recognised as hybrid (%, > 0.7)", "Assigned as pure wolf or dog (%)"), caption = "NewHybrids assignment of simulated hybrids of known class (33 loci, Jeffreys priors)")
+
+# Hybrid probability for evey simulated hybrid in power analysis with 0.7 threshold (from reserach paper)
+p_power <- ggplot(power_results, aes(power_class, hybrid_probability, colour = power_class)) +
+  geom_hline(yintercept = 0.7, linetype = "dashed", colour = "grey40") +
+  geom_boxplot(outlier.shape = NA, width = 0.5) +
+  geom_point(size = 0.8, alpha = 0.5, position = position_jitter(width = 0.15, height = 0, seed = 1)) +
+  scale_colour_manual(values = short_colours, guide = "none") +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(title = "NewHybrids hybrid probability of simulated hybrids (100 per class)", 
+       x = NULL, y = "Hybrid probability (F1 + F2 + BC)") +
+  panel_theme
+
+p_power
+ggsave(file.path(newhybrids_power_dir, "newhybrids_power.png"), p_power, width = 16, height = 12.7, units = "cm", dpi = 300, bg = "white")
+ggsave(file.path(newhybrids_power_dir, "newhybrids_power.pdf"), p_power, width = 16, height = 12.7, units = "cm", device = cairo_pdf)
+```
+
+
+
+## NewHybrids results visualizations
+
+```{r NewHybrids_Results, eval = file.exists(file.path(newhybrids_dir, "aa-PofZ.txt")), fig.width = 6.3, fig.height = 5, out.width = "100%", dpi = 150}
+# Names for columns with probabilites from result files
+newhybrids_classes <- c("Wolf", "Dog", "F1", "F2", "BC wolf", "BC dog")
+
+# Read results table and attaches the key made  in previous chunk and filters only for my 24 smaples
+newhybrids_results <- read.table(file.path(newhybrids_dir, "aa-PofZ.txt"), skip = 1, col.names = c("index", "name", newhybrids_classes), check.names = FALSE) %>%
+  left_join(newhybrids_key, by = "index") %>%
+  filter(flag == "")
+
+# For each sample it finds the most likely class and assigns the name
+newhybrids_results$newhybrids_class <- newhybrids_classes[max.col(newhybrids_results[, newhybrids_classes], ties.method = "first")]
+
+# saves probability of the most likely class, prob of being any hybrid and saves the decision from the Harmoinen assignment rules
+newhybrids_results <- newhybrids_results %>%
+  mutate(highest_probability = pmax(Wolf, Dog, F1, F2, `BC wolf`, `BC dog`),
+         hybrid_probability = F1 + F2 + `BC wolf` + `BC dog`,
+         harmoinen_call = case_when(hybrid_probability > 0.7 ~ "Hybrid", 
+                                    pmax(Wolf, Dog) >= 0.5 ~ "Pure", 
+                                    TRUE ~ "Unassigned"))
+
+# Saves results
+write_tsv(newhybrids_results, file.path(newhybrids_dir, "newhybrids_sample_classes.tsv"))
+kable(arrange(newhybrids_results[, c("animal", "newhybrids_class", "highest_probability", "hybrid_probability", "harmoinen_call")], desc(hybrid_probability)), digits = 3, col.names = c("Sample", "NewHybrids class", "Probability", "Hybrid probability (F1 + F2 + BC)", "Call (Harmoinen et al. 2021)"))
+
+# Same plot as DAPC
+newhybrids_plot_order <- c("Wolf", "BC wolf", "F1", "F2", "BC dog", "Dog")
+newhybrids_colours <- setNames(c("#467378", "#D9AF6B", "#C98A4E", "#D7C9BE", "#AF6458", "#7E4038"), newhybrids_plot_order)
+newhybrids_long <- newhybrids_results %>%
+  select(sample = animal, all_of(newhybrids_classes)) %>%
+  pivot_longer(-sample, names_to = "group", values_to = "probability") 
+
+p_newhybrids <- ggplot(newhybrids_long, aes(factor(sample, levels = dapc_order), probability, fill = factor(group, levels = newhybrids_plot_order))) +
+  geom_col(width = 0.85, position = position_stack(reverse = TRUE)) +
+  scale_fill_manual(values = newhybrids_colours, name = NULL) +
+  scale_y_continuous(expand = c(0, 0)) +
+  guides(fill = guide_legend(nrow = 1)) +
+  labs(title = "NewHybrids class probability of the samples", x = NULL, y = "Posterior probability") +
+  panel_theme + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 6.5))
+
+p_newhybrids
+ggsave(file.path(newhybrids_dir, "newhybrids_classes.png"), p_newhybrids, width = 16, height = 12.7, units = "cm", dpi = 300, bg = "white")
+ggsave(file.path(newhybrids_dir, "newhybrids_classes.pdf"), p_newhybrids, width = 16, height = 12.7, units = "cm", device = cairo_pdf)
+```
+
+
+
+## Combined ancestry results
+This chunk produces a dataframe, side by side result for every sample using all the different methods which makes results easibly comparable. MEthods in question are my measured wolf ancestry from the Bayesian model, PC1, DAPC  and NewHybrids, 
+
+```{r Combined_Ancestry_Results, eval = exists("newhybrids_results"), fig.width = 6.3, fig.height = 8.7, out.width = "100%", dpi = 300}
+# Creates combined classed for DAPC, adds probabilites per sample and class and keeps the maximum value
+dapc_combined <- dapc_long %>%
+  mutate(dapc_class = case_when(group %in% c("Wolf", "BC2 wolf") ~ "Wolf-like",
+                                group %in% c("Dog", "BC2 dog") ~ "Dog-like",
+                                TRUE ~ group)) %>%
+  summarise(dapc_probability = round(sum(probability), 3), .by = c(sample, dapc_class)) %>%
+  slice_max(dapc_probability, n = 1, by = sample, with_ties = FALSE)
+
+# Prepares one row per sample with column of different ancestry results, Stan ancestry, PC1, DAPC and NewHybrids ordered by PC1
+ancestry_summary <- stan_scores %>%
+  select(sample, wolf_ancestry, wolf_ancestry_low, wolf_ancestry_high, ancestry_class, PC1) %>%
+  left_join(dapc_combined, by = "sample") %>%
+  left_join(transmute(newhybrids_results, sample = animal, newhybrids_class, newhybrids_probability = highest_probability,
+                      newhybrids_hybrid_probability = hybrid_probability, harmoinen_call), by = "sample") %>%
+  arrange(PC1)
+write_tsv(ancestry_summary, file.path(ancestry_out_dir, "ancestry_summary.tsv"))
+
+kable(transmute(ancestry_summary, sample,
+                wolf_ancestry = sprintf("%.2f (%.2f-%.2f)", wolf_ancestry, wolf_ancestry_low, wolf_ancestry_high),
+                ancestry_class,
+                PC1 = sprintf("%.2f", PC1),
+                dapc = sprintf("%s (%.2f)", dapc_class, dapc_probability),
+                newhybrids = sprintf("%s (%.3f)", newhybrids_class, newhybrids_probability),
+                harmoinen_call),
+      col.names = c("Sample", "Wolf ancestry (95 % interval)", "Bayesian class", "PC1", "DAPC class (probability)",
+                    "NewHybrids class (probability)", "Call (Harmoinen et al. 2021)"),
+      caption = "Ancestry of every sample with all methods, ordered by PC1")
+
+# One long table with all three methods, sample, class, probability (or ancestry share) and method
+bar_methods <- c("A   Bayesian wolf ancestry (mean and 95 % interval)", "B   DAPC membership probability", "C   NewHybrids posterior probability")
+bar_data <- bind_rows(transmute(stan_scores, sample, group = "Wolf", probability = wolf_ancestry,
+                                low = wolf_ancestry_low, high = wolf_ancestry_high, method = bar_methods[1]),
+  transmute(stan_scores, sample, group = "Dog", probability = 1 - wolf_ancestry, method = bar_methods[1]),
+  mutate(dapc_long, method = bar_methods[2]),
+  mutate(newhybrids_long, method = bar_methods[3])) %>%
+  mutate(sample = factor(sample, levels = dapc_order), group = factor(group, levels = append(simulated_short_labels, "F2", after = 4)))
+
+# Stacked bar plots per method ordered and same colours (Bayesian ancestry, DAPC and NewHybrids)
+p_ancestry_bars <- ggplot(bar_data, aes(sample, probability, fill = group)) +
+  geom_col(width = 0.85, position = position_stack(reverse = TRUE)) +
+  geom_errorbar(aes(ymin = low, ymax = high), width = 0.3, linewidth = 0.3, na.rm = TRUE) +
+  facet_wrap(~ method, ncol = 1) +
+  scale_fill_manual(values = c(short_colours, F2 = "#D7C9BE"), name = NULL) +
+  scale_y_continuous(expand = c(0, 0)) +
+  guides(fill = guide_legend(nrow = 1)) +
+  labs(x = NULL, y = NULL) +
+  panel_theme + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 6.5),
+                      strip.background = element_blank(), strip.text = element_text(face = "bold", hjust = 0, size = 11),
+                      panel.border = element_blank())
+
+p_ancestry_bars
+ggsave(file.path(ancestry_out_dir, "ancestry_bar_panel.png"), p_ancestry_bars, width = 16, height = 22, units = "cm", dpi = 300, bg = "white")
+ggsave(file.path(ancestry_out_dir, "ancestry_bar_panel.pdf"), p_ancestry_bars, width = 16, height = 22, units = "cm", device = cairo_pdf)
 ```
 
 

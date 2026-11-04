@@ -1,0 +1,25 @@
+sample	wolf_ancestry	wolf_ancestry_low	wolf_ancestry_high	ancestry_class	PC1	dapc_class	dapc_probability	newhybrids_class	newhybrids_probability	newhybrids_hybrid_probability	harmoinen_call
+W215294	0.065	0.002	0.187	Dog-like	-2.871431515603192	Dog-like	0.999	Dog	0.99998	2e-5	Pure
+W215232	0.339	0.177	0.502	Backcross to dog	-0.8976625938559852	F1	0.81	BC dog	0.85701	0.9807	Hybrid
+W211233	0.762	0.621	0.877	Backcross to wolf	1.6596603015205948	BC wolf	0.729	BC wolf	0.99918	1	Hybrid
+W215210.r1	0.911	0.806	0.982	Wolf-like	2.3094391670595726	Wolf-like	0.987	Wolf	0.99971	2.9e-4	Pure
+W215214.r1	0.943	0.846	0.996	Wolf-like	2.456133287367899	Wolf-like	0.998	Wolf	1	0	Pure
+W215231	0.919	0.821	0.982	Wolf-like	2.524491772280747	Wolf-like	0.996	Wolf	0.99941	5.9e-4	Pure
+W215273	0.924	0.821	0.99	Wolf-like	2.5578011078352065	Wolf-like	0.994	Wolf	0.99996	4e-5	Pure
+W211293	0.922	0.826	0.985	Wolf-like	2.5701817268126823	Wolf-like	0.996	Wolf	0.99905	9.5e-4	Pure
+W215539.r1	0.934	0.83	0.995	Wolf-like	2.575446670781494	Wolf-like	0.996	Wolf	1	0	Pure
+W215214	0.917	0.816	0.983	Wolf-like	2.632907908586627	Wolf-like	0.996	Wolf	0.99996	4e-5	Pure
+W215208.r1	0.962	0.88	0.999	Wolf-like	2.645625178263783	Wolf-like	0.999	Wolf	1	0	Pure
+W215511	0.956	0.869	0.998	Wolf-like	2.6841656881160056	Wolf-like	0.999	Wolf	1	0	Pure
+W215220	0.958	0.872	0.998	Wolf-like	2.7389391897756923	Wolf-like	1	Wolf	1	0	Pure
+W215222.r1	0.933	0.837	0.99	Wolf-like	2.759181609728471	Wolf-like	0.998	Wolf	0.99999	1e-5	Pure
+W215207.r1	0.978	0.917	0.999	Wolf-like	2.7871321282707027	Wolf-like	1	Wolf	1	0	Pure
+W215222	0.958	0.87	0.998	Wolf-like	2.7949214634243713	Wolf-like	0.999	Wolf	1	0	Pure
+W215538	0.959	0.88	0.998	Wolf-like	2.812867536256208	Wolf-like	0.999	Wolf	1	0	Pure
+W211255	0.959	0.876	0.999	Wolf-like	2.8841682620609594	Wolf-like	1	Wolf	1	0	Pure
+W215154	0.972	0.908	0.999	Wolf-like	2.9144239788130926	Wolf-like	1	Wolf	1	0	Pure
+W215220.r1	0.976	0.914	0.999	Wolf-like	2.9471337415028884	Wolf-like	1	Wolf	1	0	Pure
+W211287	0.978	0.92	0.999	Wolf-like	3.0430096614441764	Wolf-like	1	Wolf	1	0	Pure
+W211224	0.973	0.906	0.999	Wolf-like	3.1074579331005596	Wolf-like	1	Wolf	1	0	Pure
+W215217	0.973	0.911	0.999	Wolf-like	3.1074579331005596	Wolf-like	1	Wolf	1	0	Pure
+W211213	0.981	0.93	1	Wolf-like	3.2269697577346514	Wolf-like	1	Wolf	1	0	Pure

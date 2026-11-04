@@ -10,7 +10,7 @@
 
 
 
-<meta name="date" content="2026-11-03" />
+<meta name="date" content="2026-11-04" />
 
 <title>Master pipeline</title>
 
@@ -3249,7 +3249,7 @@ border-radius: 0px;
 
 
 <h1 class="title toc-ignore">Master pipeline</h1>
-<h4 class="date">03 November 2026</h4>
+<h4 class="date">04 November 2026</h4>
 
 </div>
 
@@ -3482,8 +3482,8 @@ settings.</p>
 <span id="cb26-12"><a href="#cb26-12" tabindex="-1"></a>)</span></code></pre></div>
 <div class="sourceCode" id="cb27"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" tabindex="-1"></a>timing_stage_08 <span class="ot">&lt;-</span> <span class="fu">run_stage</span>(<span class="st">&quot;Code/Rmd_Stages/08_Ancestry_Analysis.Rmd&quot;</span>,</span>
 <span id="cb27-2"><a href="#cb27-2" tabindex="-1"></a>  <span class="fu">c</span>(shared_settings, settings_05_bayesian, settings_08_ancestry_validation), <span class="at">run =</span> run_08_ancestry_validation)</span></code></pre></div>
-<pre><code>STARTED: Code/Rmd_Stages/08_Ancestry_Analysis.Rmd at 17:49</code></pre>
-<pre><code>FINISHED: Code/Rmd_Stages/08_Ancestry_Analysis.Rmd in 0.3 min</code></pre>
+<pre><code>STARTED: Code/Rmd_Stages/08_Ancestry_Analysis.Rmd at 11:44</code></pre>
+<pre><code>FINISHED: Code/Rmd_Stages/08_Ancestry_Analysis.Rmd in 0.5 min</code></pre>
 </div>
 <div id="summary" class="section level2">
 <h2>Summary</h2>
@@ -3491,7 +3491,7 @@ settings.</p>
 <span id="cb30-2"><a href="#cb30-2" tabindex="-1"></a>stage_timings <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(timing_stage_01, timing_stage_02, timing_stage_03, timing_stage_04, timing_stage_05, timing_stage_06, timing_stage_07, timing_stage_08)</span>
 <span id="cb30-3"><a href="#cb30-3" tabindex="-1"></a><span class="fu">kable</span>(stage_timings, <span class="at">caption =</span> <span class="fu">sprintf</span>(<span class="st">&quot;Total: %.1f min&quot;</span>, <span class="fu">sum</span>(stage_timings<span class="sc">$</span>minutes))) <span class="co">#prepares it for better looking output in HTML</span></span></code></pre></div>
 <table>
-<caption>Total: 0.3 min</caption>
+<caption>Total: 0.5 min</caption>
 <thead>
 <tr class="header">
 <th align="left">stage</th>
@@ -3501,7 +3501,7 @@ settings.</p>
 <tbody>
 <tr class="odd">
 <td align="left">08_Ancestry_Analysis.Rmd</td>
-<td align="right">0.3</td>
+<td align="right">0.5</td>
 </tr>
 </tbody>
 </table>
