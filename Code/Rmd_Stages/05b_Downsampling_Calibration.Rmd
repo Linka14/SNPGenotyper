@@ -1,5 +1,5 @@
 ---
-title: "Bayesian Genotyping"
+title: "Stage 05b: Downsampling and genotype calibration"
 subtitle: "`r paste0('Dataset: ', params$dataset_name)`"
 output:
   html_document:
@@ -29,11 +29,6 @@ params:
 
   # Primer panel path
   primer_panel_path: "Data/Supporting_data/Primer_panels/12864_2021_7761_MOESM12_ESM_filtered.xlsx"
-
-  # What to run
-  run_stan: TRUE # runs Bayes model
-  run_downsampling: TRUE # runs downsampling and calibration statistics (needs run_stan: TRUE in the same run)
-  run_stan_plots: TRUE # runs visualisations (from this run, or from the saved run with the same settings)
   
   # Input reads and primers settings
   input_type: "unpadded" # "padded" or "unpadded"
@@ -150,253 +145,21 @@ timing_log <- list() # empty timing log, log_time() adds one row per step
 ```
 
 
-## Hierarchical model for missclasification rate
-This chunk contains hierarchical base mixture Bayesian genotyper model for identified Obitools reads, it does one stan call for all samples and loci together. It takes the allele counts for every sample locus pair where k = allele1 reads and d = all usable reads, it doesn't run on reads itself just the genotype deciding process. The naive caller uses a fixed rule for every sample locus pair, if MAF reaches over 20 % the pair is called HT otherwise its HM. Where it lacks is that it treats every locus and sample the same way (I get a results, a specific genotype, but I'm not sure how confident that result is, depth 10 and depth 300 genotypes look the same on the end results heatmap). This Stan model is a bit more sophisticated because it goes around this a different way, it asks "given how noisy this one locus sample pair is, how likely are these allele counts under each genotype?". 
-Why use hierarchical? If i want to estimate error rate at each locus i have different ways of computing it on 24 sample and 33 loci. Either with full complete pooling of and treat all loci the same, throw all reads together and compute one global error rate. Its simple, but it lacks nuance. One loci might have a higher error rate because of the homopolymer site right before the SNP position (5 %) and a clean locus could have 0.3 % error rate. One shared value can be too strict or too loose for different loci.
-Second option is without pooling and treat every locus separately on its own reads. This option is completely valid, it removes the previous problem but a new one appears. Not all loci have the same amount of depth and data to work with and when there is not a lot of data to work with each estimate relies too much on pure chance.
-Third option is partial or hierarchical pooling. It treats each loci separately, but still takes in count that they "come from the same background". Loci are related but not exactly identical (same chemistry, sequencer, pipeline). Each locus gets its own error rate, but those rate are assumed to come from one shared distribution (errors rate is about 3 % but they scatter around by some estimated amount). The model learns both those values, typical error rate  and how much loci really differ (mu_error and sigma_error_locus). Each locus gets its own value but it comes from its own data and the families typical value and that ratio of reliance is based on amount of evidence (depth, number of reads) for each locus separately. Lower depth locus relies more on (is pulled more towards) the typical "family" values, and a locus with more informative reads and higher depth is relies more on its own data. 
-The same can happen for samples, one can have a higher error rate because DNA is more degraded. A sample with few reads can borrow from strength from other.
-Error rate is calculated as pair error rate =  typical value +  locus effect + sample effect (mu_error + sigma_error_locus * z_error_locus + sigma_error_sample * z_error_sample). Heterozygote allele balance is pooled the same way. its better for genotyping low depth pairs, they can produce overconfident (0 % or 10 %) and extreme estimates and partial pooling pulls it more towards the shared value which makes GQ more meaningful.
 
-Overdispersion: Model handles it in two ways: which DNA molecules happened to be copied and which happened to be sequenced.
-A simple binomial model would treat reads for a HT (CT) like coin flips. If every read were an independent "coin flip" from DNA, each read would get a fair chance to be 50 % c or T. The more depth and reads you have, lower the dispersion and closer it is to a true 50 50 split. But reads arent really independent, they come from template molecules, which read get mulitiplied in the PCR is random which affects sequences and reads background. Sequencing more reads or having more depth and data doesnt necessarily give a closer true independent state it just gives a better estimate for that specific split that happened during the labratory prep.
-Beta binomial models this with two steps, a true share of copied DNA for specific paris varies at around 50 % (step 1) and the reads are coin flips from that share (step 2). How much step 1 varies is set by phi which can be treated as number of effective templates oreffective sample size. Lower amount of them means more scatter, more of them means it behaves more like  plain binomial. This model fits two of them phi_het for HT with a prior of around 30 molecules and phi_hom and for minor allele reads in HM  with a prior at around 200. With binomials more reads give less scatter, but with betabinomial more reads doesnt neccesarily mean the same thing, scatter levels at around +-9 % because the limit are the molecules not the reads.
-Example: HT with 200 reads (140:60 - 30 % for minor) with binomial that is far away from 5050 split (chance of 0.000002%), model would push it towards HM even though that amount of MAF is not typical for HM. With betabinomial that chance is at around  4 %, rare but not almost impossible. Same example but with  20 reads (14:6), binomial gives it 11.5 % and betabinomial 22 %. 
-Phi_het also has limits set to at least 10. And its the same for all counts for every sample and locus that is not exactly accurate with reality where low DNA sample has fewer molecules than higher quality DNA sample. Downsampling shows HT are overconfident, for which this one shared phi might be the culprit. Pairs with fewer molecules scatter more than phi allows and the model is too   sure about them. That is why an updated model now uses phi_het separated between samples with the same partial pooling.
-
-Allele bias per locus: in theory two allele specific priors per locus should have the same shares  and are present in equal amounts in HT. In practice those two arent identical, one may bind a little better at the end, that primers specific bindings probabilities can be the cause of the MAF and different split between alleles. This model learns the expected HT split for every locus (het_fraction), its partially pooled across loci like the error rate (a locus with only two HT can claim a strong bias with that little amount of information) and it also has safety limits  het_min and 1 - het_min (0.2 to 0.8). This  can change confident HM calls into less confident HM calls or even HT. A lot of information comes from GQ which gives you confidence on the same scale as Phred
-
-```{r Hierarchical_Stan_Genotyping, eval = params$run_stan}
-# Folder name preparation based on previous ASP run and settings used
-settings_suffix_hier <- basename(run_names$asp_run_name) # same settings label
-prior_label_hier <- run_names$prior_label
+## Loading Stan results
+Imports results from previous 5a stage Bayesian genotyping run
+```{r Load_Stan_Results}
+# Results of the Stan run from 05a with the same settings
 output_folder_name_hier <- file.path("Results", dataset_name, "Genotypes_results", run_names$bayes_run_name)
-dir.create(output_folder_name_hier, showWarnings = FALSE, recursive = TRUE)
+stan_plot_inputs_file <- file.path(output_folder_name_hier, "stan_plot_inputs.rds")
+stopifnot("no saved Stan run with these settings, run 05a first" = file.exists(stan_plot_inputs_file))
 
-# Settings used each run saved directly inside the output folder, useful for reproducibility
-write.table(settings_used, file.path(output_folder_name_hier, "settings_used.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
+invisible(list2env(readRDS(stan_plot_inputs_file), envir = environment()))
+prior_label_hier <- run_names$prior_label
 
-# PAth to the stan model, compiled model is saved next to it
-stan_model_path_hier <- "Stan_config/base_mixture_model_hierarchical.stan"
-rstan_options(auto_write = TRUE) 
-mixture_stan_hier_model <- stan_model(stan_model_path_hier)
-
-# Reads from the folder not R memory, reads the result files from ASP genotyper pipeline
+# The same reads from 5a
 reads_hier <- read_tsv(file.path(output_folder_name_identified, "all_barcodes_asp_reads.tsv"), show_col_types = FALSE,
                        col_types = cols(called_allele = col_character(), called_allele_raw = col_character(), .default = col_guess()))
-naive_genotypes_hier <- read_tsv(file.path(output_folder_name_identified, "all_barcodes_asp_genotypes.tsv"), show_col_types = FALSE,
-                                 col_types = cols(genotype = col_character(), strand_check = col_character(), .default = col_guess()))
-cat(sprintf("Stan input: %s (%d reads)\n", run_names$asp_run_name, nrow(reads_hier)))
-
-# Allele counts from the scorer function, only reads that passed every filter
-counts_hier <- reads_hier %>%
-  filter(!is.na(called_allele)) %>%
-  left_join(panel[, c("locus", "allele1", "allele2")], by = "locus") %>%
-  group_by(barcode, locus) %>%
-  summarise(k = sum(called_allele == allele1),
-            d = sum(called_allele == allele1 | called_allele == allele2),
-            .groups = "drop") %>%
-  filter(d >= minimum_required_depth)
-
-# Check that the reads and depth are the same
-depth_check_hier <- inner_join(counts_hier, naive_genotypes_hier[, c("barcode", "locus", "depth")], by = c("barcode", "locus"))
-stopifnot("reads and genotypes file are from different ASP runs (Stan depth != ASP depth)" = all(depth_check_hier$d == depth_check_hier$depth),
-          "the fitted pairs are not the ASP-called pairs" = nrow(counts_hier) == sum(naive_genotypes_hier$status == "called"))
-
-samples_hier <- sort(unique(counts_hier$barcode))
-loci_hier <- sort(unique(counts_hier$locus))
-
-# Genotype prior for every locus taken from primer panel when setting is set to "HWE", column taken based on population set
-if (prior_type %in% c("hwe", "ancestry")) {
-  allele1_frequency_hier <- data.frame(
-    locus = panel_sheet[["SNP name"]],
-    frequency = as.numeric(panel_sheet[[match(prior_population, names(panel_sheet))]]), # match() takes the first column with this name = allele 1
-    dog_frequency = as.numeric(panel_sheet[[match("FreqDOG", names(panel_sheet))]])) # dog side, only used by "ancestry"
-}
-
-# This builds the genotype prior for every pair one row per pairs. Prior is chosen from the settings
-pair_prior_hier <- switch(prior_type,
-  flat = matrix(1/3, nrow = nrow(counts_hier), ncol = 3),
-  het_share = matrix(rep(c((1 - prior_het_share) / 2, (1 - prior_het_share) / 2, prior_het_share), each = nrow(counts_hier)), ncol = 3),
-  hwe = {
-    allele1_p <- allele1_frequency_hier$frequency[match(counts_hier$locus, allele1_frequency_hier$locus)]
-    allele1_p <- pmin(pmax(ifelse(is.na(allele1_p), 0.5, allele1_p), prior_floor), 1 - prior_floor) # missing frequency = 0.5, then floored
-    cbind(allele1_p^2, (1 - allele1_p)^2, 2 * allele1_p * (1 - allele1_p)) # Hardy-Weinberg: p^2, q^2, 2pq
-  },
-  ancestry = matrix(1/3, nrow = nrow(counts_hier), ncol = 3)) # placeholder, Stan builds the ancestry prior itself (replaced by the fitted prior after sampling)
-colnames(pair_prior_hier) <- c("prior_hom1", "prior_hom2", "prior_het")
-
-# This list is taken by STAN, this is the data that goes into stan model. Everything is turned into number for stan, because it cant use names fro samples or loci
-stan_data_hier <- list(
-  N = nrow(counts_hier), # number of pairs
-  S = length(samples_hier), # number of samples
-  L = length(loci_hier), # number of loci
-  sample_id = as.integer(factor(counts_hier$barcode, levels = samples_hier)), # Position (indices) of each which sample and locus belongs specific pair
-  locus_id = as.integer(factor(counts_hier$locus, levels = loci_hier)),
-  k = as.integer(counts_hier$k), # reads for allele 1
-  d = as.integer(counts_hier$d), # all filtered reads
-  max_error = max_error, # cap on any error rate
-  het_min = HT_min_frequence, # heterozygote allele1 fraction stays between 0.2 and 0.8 (1 - HT_minor_frequence)
-  pair_prior = unname(pair_prior_hier), # genotype prior for every pair, same order as counts_hier (rows add up to 1), names are removed
-  use_ancestry = as.integer(prior_type == "ancestry"), # 1 = Stan learns a wolf ancestry per sample and builds the prior from it
-  p_wolf = if (prior_type == "ancestry") pmin(pmax(coalesce(allele1_frequency_hier$frequency[match(loci_hier, allele1_frequency_hier$locus)], 0.5), prior_floor), 1 - prior_floor) else rep(0.5, length(loci_hier)), # per locus in loci_hier order, missing = 0.5, floored
-  p_dog = if (prior_type == "ancestry") pmin(pmax(coalesce(allele1_frequency_hier$dog_frequency[match(loci_hier, allele1_frequency_hier$locus)], 0.5), prior_floor), 1 - prior_floor) else rep(0.5, length(loci_hier)),
-  ancestry_prior_shape = ancestry_prior_shape,
-  phi_hom_by_locus = as.integer(phi_hom_structure %in% c("locus", "locus_sample")), # homozygote overdispersion per locus (partially pooled)
-  phi_hom_by_sample = as.integer(phi_hom_structure %in% c("sample", "locus_sample")) # homozygote overdispersion per sample (partially pooled)
-)
-
-cat(sprintf("Gathered %d pairs (%d samples x %d loci) - running ONE hierarchical Stan call | genotype prior: %s\n",
-            stan_data_hier$N, stan_data_hier$S, stan_data_hier$L, prior_label_hier))
-
-t0 <- Sys.time()
-
-### Actual run for the Bayesian model, finds which parameters fit my data with MCMC sampling and saves all the combinations. results are average of these draws. It runs 4 independent chains with discarded warmup.
-fit_hier <- sampling(
-  mixture_stan_hier_model, # compiled model from stan file
-  data = stan_data_hier,
-  iter = stan_iter, warmup = stan_warmup, chains = stan_chains, cores = min(stan_chains, n_cores), 
-  control = list(adapt_delta = stan_adapt_delta), # smaller steps, avoids divergences in hierarchical models
-  refresh = 0, seed = 1, # no progress messages, same seed for same results when reruning
-  pars = "log_genotype_prior", include = FALSE # the per-pair prior is rebuilt in R from wolf_ancestry, not stored for every draw
-)
-log_time(sprintf("hierarchical sampling: %d pairs", stan_data_hier$N), t0)
-
-# Chain convergence check. Rhat checks if the chains agree (should be at around 1.00, if they disagree > 1.00)- Rhat compares two different spreads within each chain (variations of values inside the chain) and between chains (how far apart the averages are). Rhat should be below 1.01
-hyper_pars_hier <- c("mu_error", "sigma_error_locus", "sigma_error_sample", "mu_bias", "sigma_bias", "phi_het", "sigma_phi_het", "phi_hom_typical",
-                     if (stan_data_hier$phi_hom_by_locus == 1) "sigma_phi_hom_locus",
-                     if (stan_data_hier$phi_hom_by_sample == 1) "sigma_phi_hom_sample") # spreads only when they are estimated
-hyper_summary_hier <- summary(fit_hier, pars = hyper_pars_hier)$summary
-hyper_labels_hier <- c(mu_error = "Typical error rate (logit scale)",
-                       sigma_error_locus = "Error rate spread between loci",
-                       sigma_error_sample = "Error rate spread between samples",
-                       mu_bias = "Typical heterozygote allele bias (logit scale)",
-                       sigma_bias = "Allele bias spread between loci",
-                       phi_het = "Effective sample size in heterozygotes (typical sample)",
-                       sigma_phi_het = "Effective sample size spread between samples (log scale)",
-                       phi_hom_typical = "Homozygote overdispersion (typical pair)",
-                       sigma_phi_hom_locus = "Homozygote overdispersion spread between loci (log scale)",
-                       sigma_phi_hom_sample = "Homozygote overdispersion spread between samples (log scale)")
-kable(data.frame(parameter = hyper_labels_hier[rownames(hyper_summary_hier)],
-                 hyper_summary_hier[, c("mean", "2.5%", "97.5%", "n_eff", "Rhat")], check.names = FALSE), digits = 3, row.names = FALSE)
-
-# Grabs the worst Rhat
-max_rhat_hier <- max(summary(fit_hier)$summary[, "Rhat"], na.rm = TRUE)
-cat(sprintf("Max Rhat: %.3f | divergent transitions: %d | max treedepth hits: %d\n", max_rhat_hier,
-            get_num_divergent(fit_hier), get_num_max_treedepth(fit_hier)))
-
-# Extracts all the info about the draws
-draws_hier <- extract(fit_hier, c("posterior", "error_locus", "error_sample", "het_fraction", "phi_het", "phi_het_sample", "phi_hom_typical", "phi_hom_pair"))
-
-# Per pair means of all the draws 
-post_hier <- apply(draws_hier$posterior, c(2, 3), mean)
-
-# Ancestry prior: the prior of every pair is learned, so the prior columns and the downsampling use its posterior mean (averaged over the draws)
-if (prior_type == "ancestry") {
-  wolf_ancestry_draws <- as.matrix(fit_hier, pars = "wolf_ancestry")
-  allele1_p_draws <- wolf_ancestry_draws[, stan_data_hier$sample_id] * rep(stan_data_hier$p_wolf[stan_data_hier$locus_id] - stan_data_hier$p_dog[stan_data_hier$locus_id], each = nrow(wolf_ancestry_draws)) +
-    rep(stan_data_hier$p_dog[stan_data_hier$locus_id], each = nrow(wolf_ancestry_draws)) # q * p_wolf + (1 - q) * p_dog
-  pair_prior_hier <- cbind(prior_hom1 = colMeans(allele1_p_draws^2), prior_hom2 = colMeans((1 - allele1_p_draws)^2), prior_het = colMeans(2 * allele1_p_draws * (1 - allele1_p_draws)))
-}
-
-# Parameters for each locus, error rate for average sample and HT allele 1 fraction 
-locus_params_hier <- data.frame(
-  locus = loci_hier,
-  error_rate_locus = round(colMeans(draws_hier$error_locus), 5),
-  het_fraction = round(colMeans(draws_hier$het_fraction), 4))
-
-# Parameters for every sample, error rate and and phi_het_sample which are effective sample size of the samples HT (for overdispersion)
-sample_params_hier <- data.frame(
-  barcode = samples_hier,
-  error_rate_sample = round(colMeans(draws_hier$error_sample), 5),
-  phi_het_sample = round(colMeans(draws_hier$phi_het_sample), 1))
-
-if (prior_type == "ancestry") {
-  sample_params_hier$wolf_ancestry <- round(colMeans(wolf_ancestry_draws), 3) # 0 = dog, 1 = wolf
-  sample_params_hier$wolf_ancestry_low <- round(apply(wolf_ancestry_draws, 2, quantile, 0.025), 3) # 95 % credible interval
-  sample_params_hier$wolf_ancestry_high <- round(apply(wolf_ancestry_draws, 2, quantile, 0.975), 3)
-}
-  
-# This the Rstan results table, one row per fitted pair with info about priors used, posterior porbability for all three genotypes per pair, maximum posterior (genotype) and actual genotype (aa, ct, cc, ...), margin, GQ.
-stan_rows_hier <- counts_hier %>%
-  left_join(panel[, c("locus", "allele1", "allele2")], by = "locus") %>%
-  mutate(
-    prior_het = round(pair_prior_hier[, "prior_het"], 4), 
-    posterior_hom1 = round(post_hier[, 1], 4),
-    posterior_hom2 = round(post_hier[, 2], 4),
-    posterior_het = round(post_hier[, 3], 4),
-    genotype_key = max.col(post_hier, ties.method = "first"),
-    genotype_stan = ifelse(genotype_key == 1, paste0(allele1, allele1),
-                    ifelse(genotype_key == 2, paste0(allele2, allele2),
-                           paste0(pmin(allele1, allele2), pmax(allele1, allele2)))), # Alphabeticaly sorted
-    max_posterior = round(apply(post_hier, 1, max), 4),
-    margin = round(apply(post_hier, 1, function(p) diff(sort(p, decreasing = TRUE)[2:1])), 4),
-    GQ = round(pmin(99, -10 * log10(pmax(1 - apply(post_hier, 1, max), 1e-10))), 1)
-  ) %>%
-  select(barcode, locus, k, genotype_stan, prior_het, posterior_hom1, posterior_hom2, posterior_het, max_posterior, margin, GQ)
-
-# Combined table for both runs, the naive one and Bayes, with strand check and QD, depth aswell.
-combined_genotypes_hier <- naive_genotypes_hier %>%
-  select(barcode, locus, genotype_naive = genotype, depth, status, strand_check, QD) %>%
-  left_join(stan_rows_hier, by = c("barcode", "locus")) %>%
-  left_join(locus_params_hier, by = "locus") %>%
-  left_join(sample_params_hier, by = "barcode") %>%
-  mutate(
-    genotype = ifelse(genotype_stan != genotype_naive & strand_check %in% "failed" & # final genotype change when strand check si true
-                        substr(genotype_stan, 1, 1) != substr(genotype_stan, 2, 2),
-                      genotype_naive, genotype_stan), 
-    changed = !is.na(genotype_naive) & !is.na(genotype) & genotype_naive != genotype
-  ) %>%
-  select(barcode, locus, genotype, genotype_stan, genotype_naive, depth, k, status, strand_check, QD,
-                prior_het, posterior_hom1, posterior_hom2, posterior_het, max_posterior, margin, GQ,
-                error_rate_locus, error_rate_sample, phi_het_sample, het_fraction, changed)
-
-# Final results table writing per sample
-for (id in unique(combined_genotypes_hier$barcode)) {
-  write_tsv(combined_genotypes_hier %>% filter(barcode == id),
-            file.path(output_folder_name_hier, paste0(id, "_base_mixture_genotypes_hierarchical.tsv")))
-}
-
-# Data for loci, samples and combined table saved separately
-write_tsv(combined_genotypes_hier, file.path(output_folder_name_hier, "all_barcodes_base_mixture_genotypes_hierarchical.tsv"))
-write_tsv(locus_params_hier, file.path(output_folder_name_hier, "locus_parameters_hierarchical.tsv"))
-write_tsv(sample_params_hier, file.path(output_folder_name_hier, "sample_parameters_hierarchical.tsv"))
-
-#Posterior draws and other objects for the plots in .rds format
-saveRDS(list(fit_hier = fit_hier, draws_hier = draws_hier, stan_data_hier = stan_data_hier, stan_rows_hier = stan_rows_hier,
-             samples_hier = samples_hier, loci_hier = loci_hier, post_hier = post_hier,
-             combined_genotypes_hier = combined_genotypes_hier),
-        file.path(output_folder_name_hier, "stan_plot_inputs.rds"))
-# Convergence table, all the parameters summary
-write_tsv(data.frame(parameter = rownames(hyper_summary_hier), hyper_summary_hier, check.names = FALSE),
-          file.path(output_folder_name_hier, "hyperparameters_hierarchical.tsv"))
-
-# Overall summary for html presentation
-summary_hier <- data.frame(
-  summary = c("Results folder", "ASP settings", "Genotype prior",
-              "All pairs (samples x loci)", "Called", "Low depth", "No coverage",
-              "Stan genotype differs from naive", "Stan HT replaced by the strand check",
-              "Calls with max posterior < 0.99",
-              "phi_het, typical sample (effective sample size in a heterozygote)", "phi_het, range across samples", "phi_hom, typical pair", "phi_hom, range across pairs"),
-  value = c(gsub("([_/])", "\\1\u200b", output_folder_name_hier), settings_suffix_hier, gsub("_", "_\u200b", prior_label_hier),
-            nrow(combined_genotypes_hier),
-            sum(combined_genotypes_hier$status == "called"),
-            sum(combined_genotypes_hier$status == "low_depth"),
-            sum(combined_genotypes_hier$status == "no_coverage"),
-            sum(combined_genotypes_hier$changed, na.rm = TRUE),
-            sum(combined_genotypes_hier$genotype_stan != combined_genotypes_hier$genotype, na.rm = TRUE),
-            sum(combined_genotypes_hier$max_posterior < 0.99, na.rm = TRUE),
-            sprintf("%.1f", mean(draws_hier$phi_het)),
-            sprintf("%.1f-%.1f", min(sample_params_hier$phi_het_sample), max(sample_params_hier$phi_het_sample)),
-            sprintf("%.1f", mean(draws_hier$phi_hom_typical)),
-            sprintf("%.0f-%.0f", min(colMeans(draws_hier$phi_hom_pair)), max(colMeans(draws_hier$phi_hom_pair)))))
-
-kable(summary_hier, col.names = c("", ""))
-kable(combined_genotypes_hier %>% filter(changed) %>%
-        select(barcode, locus, genotype_naive, genotype, depth, k, prior_het, posterior_het, error_rate_locus))
-
-if (prior_type == "ancestry") kable(sample_params_hier[, c("barcode", "wolf_ancestry", "wolf_ancestry_low", "wolf_ancestry_high")],
-                                    col.names = c("Sample", "Wolf ancestry", "2.5 %", "97.5 %"))
 ```
 
 
@@ -414,9 +177,9 @@ Calibration statistics are calculated for the stan calls: Brier score, Brier ski
 Bootstraping, it gives uncertantiy bands for results. Treatinf every downsampled call as independent is incorrect because all the subsampled read cluster come from the same locus sample pair. If the original pair for lets say HT inherits some unnusal split of 35:65, all the subsamples will as well. There are really 749 independent pairs. treating every call as indepdent would make the boostrapped bands too narrow. It draws with replacememnt from 749 pairs HM and HT separately, recomputes error rates and statisctis. 
 
 Plot for GQ threshold trade off, if i use it as a filter, how many call are kept and how many of the errors can i get rid of.
-```{r Downsampling_Calibration_Compute, eval = params$run_downsampling}
-# Check if the first chunk ran
-stopifnot("run the Stan chunk first" = exists("combined_genotypes_hier"))
+
+```{r Downsampling_Calibration_Compute}
+
 dir.create(downsampling_output_folder, showWarnings = FALSE, recursive = TRUE)
 
 # Reference genotypes and settings
@@ -805,7 +568,7 @@ saveRDS(downsampling_plot_inputs, file.path(downsampling_output_folder, "downsam
 
 This chunk makes three plots for downsampling and calibration visualsation, comparison of error rates between HM and HT against read depth, paired difference between stan and naive caller showing how many miscalls are made, and the GQ threshold simulation for using it as a filter.
 
-```{r Downsampling_Calibration_Plots, eval = params$run_stan_plots, fig.width = 8.27, fig.height = 5.85}
+```{r Downsampling_Calibration_Plots, fig.width = 8.27, fig.height = 5.85}
 ### Chunk for plotting the calibration and other results from the previous data prep chunk
 # Reading saves results so plotting chunks can be run without stan
 if (!exists("downsampling_plot_inputs")) {
@@ -926,7 +689,8 @@ ggsave(file.path(downsampling_output_folder, "gq_cutoff_tradeoff.pdf"), gq_trade
 
 ## Genotype Calibration Plot
 This chunk contains data prep and genotype calibration plot.
-```{r Genotype_Calibration_Plot, eval = params$run_stan_plots, fig.width = 8.27, fig.height = 8.27}
+
+```{r Genotype_Calibration_Plot, fig.width = 8.27, fig.height = 8.27}
 ### Calibration plot: HM and HT with bands
 calibration_colours <- c("All calls" = "grey25", "Homozygous calls" = hm_dark, "Heterozygous calls" = ht_dark) 
 
@@ -985,7 +749,8 @@ ggsave(file.path(downsampling_output_folder, "genotype_calibration.pdf"), calibr
 
 ## Genotype Prior Comparison Plots
 This chunk contains comparison plots between different priors used on the same settings, it contains data prep and plot for error rate and genotype calibration comparison.
-```{r Prior_Comparison_Plots, eval = params$run_stan_plots, fig.width = 11.69, fig.height = 8.27}
+
+```{r Prior_Comparison_Plots, fig.width = 11.69, fig.height = 8.27}
 ### Prior comparison plot with same settings but three different priors
 # Importing the files
 comparison_parent_folder <- file.path("Results", dataset_name, "Graphics", "STAN_Hierarchical")
@@ -1099,7 +864,7 @@ ggsave(file.path(comparison_parent_folder, "prior_comparison_error_vs_depth.pdf"
 ## Stan Diagnostic Plots
 This chunk contains MCMC diagnostic plots made with bayesplot package. it contains rank histograms, trace plots, Rhat, effective sample size, and so on. 
 
-```{r Stan_Diagnostic_Plots, eval = params$run_stan_plots, fig.width = 11.69, fig.height = 8.27, out.width = "100%", message = FALSE}
+```{r Stan_Diagnostic_Plots, fig.width = 11.69, fig.height = 8.27, out.width = "100%", message = FALSE}
 ### MCMC diagnostics plots saved to hierarchical bayes folder from the second chunk
 # Ulpoading saved .rds results
 if (!exists("fit_hier")) {
@@ -1215,7 +980,7 @@ ggsave(file.path(stan_diagnostics_folder, "diagnostics_panel.pdf"), stan_diagnos
 ## Stan Results Plots
 This chunk contains plots for the estimated results from hierrarchical model, that is wolf ancestry and admixture per sample (results show three possible candidates, one dog and two hybrids) and two panels of estimated error rate per locus and per sample with HT overdispersion per sample. I tried to combine it with previous result, such as loci with homopolymer sites (diamonds as in previous plots for continuity), miscall per loci with crosses, red loci names showing the ones with most ties during alignment scoring and indels per read colour mapping. Maybe its a bit too much, maybe I'll clean it up so its not too hectic.
   
-```{r Stan_Results_Plots, eval = params$run_stan_plots, out.width = "100%"}
+```{r Stan_Results_Plots, out.width = "100%"}
 ### Plots for model estimates showing error rate per locus and sample, and computed ancestry and admixture
 # Importing saved .rds when only running the plots
 if (!exists("fit_hier")) {
