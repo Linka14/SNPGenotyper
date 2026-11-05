@@ -1,9 +1,10 @@
 import glob
 import yaml
+import subprocess
 
 configfile: "config.yaml"
 
-# Settings or values used to build the file paths are taken from config.yaml
+# Settings or values used to build the file paths are taken from config.yaml 
 dataset_name = config["shared_settings"]["dataset_name"]
 barcode_numbers = [f"{barcode_number:02d}" for barcode_number in range(1, config["shared_settings"]["n_barcodes"] + 1)]
 demultiplexed_folder = f"Data/Processed_data/{dataset_name}/Demultiplexed_sequence_data"
@@ -13,6 +14,18 @@ identified_fastqs = [f"{demultiplexed_folder}/Identified_sample_sequences_Obi4/b
 unidentified_fastqs = [f"{demultiplexed_folder}/Unidentified_sample_sequences_Obi4/barcode{barcode}_unidentified.fastq" for barcode in barcode_numbers]
 padded_fastqs = [f"{demultiplexed_folder}/Identified_padded_sample_sequences/barcode{barcode}_padded.fastq" for barcode in barcode_numbers]
 minimap2_folder = f"Results/{dataset_name}/Genotypes_results/MiniMap2_genotypes"
+
+# Stage 04 reads different input fastq files based on input_type setting, those are either "padded" or "unpadded" reads.
+asp_input_fastqs = padded_fastqs if config["shared_settings"]["input_type"] == "padded" else identified_fastqs
+
+# Everytime snakemake runs it loads build_run_names() from my shared function .R script and build the name with exact settings,
+# path saved to asp_folder (it runs directly "-e", cathes the output or errors, saves as text)
+asp_run_name = subprocess.run(["Rscript", "-e",
+    'source("Code/R_scripts/asp_functions.R"); settings <- yaml::read_yaml("config.yaml")$shared_settings; '
+    'cat(build_run_names(settings$input_type, settings$use_anchors, settings$anchor_length, settings$threshold_type, settings$error_rate, settings$min_score_fraction, probe_type = settings$probe_type)$asp_run_name)'],
+    capture_output = True, text = True, check = True).stdout
+asp_folder = f"Results/{dataset_name}/Genotypes_results/{asp_run_name}"
+
 
 # Settings each stage actually uses. Each rmd stage has settings in the yaml header 
 # which each one uses specifically, those are taken from the config.yaml sections. Otherwise changing the settings from Bayes stage
@@ -29,7 +42,8 @@ def stage_settings(stage_rmd, section_names):
 rule all:
     input:
         "Code/HTMLs/02_ObiTools4_Basic_Visualisation.html",
-        "Code/HTMLs/03_SNP_Genotyping_MiniMap2.html"
+        "Code/HTMLs/03_SNP_Genotyping_MiniMap2.html",
+        f"{asp_folder}/all_barcodes_asp_genotypes.tsv"
 
 rule stage_01a_dorado: 
     input:
@@ -44,7 +58,7 @@ rule stage_01a_dorado:
     benchmark:
       "benchmarks/stage_01a.tsv"
     shell:
-      "Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/01a_Dorado_Demultiplexing.Rmd config.yaml shared_settings settings_01_demultiplexing 2>&1 | tee {log}"
+      "/usr/bin/time -l Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/01a_Dorado_Demultiplexing.Rmd config.yaml shared_settings settings_01_demultiplexing 2>&1 | tee {log}"
       
 rule stage_01b_obitools:
     input:
@@ -61,7 +75,7 @@ rule stage_01b_obitools:
     benchmark:
       "benchmarks/stage_01b.tsv"
     shell:
-      "Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/01b_ObiTools4_Demultiplexing.Rmd config.yaml shared_settings settings_01_demultiplexing 2>&1 | tee {log}"  
+      "/usr/bin/time -l Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/01b_ObiTools4_Demultiplexing.Rmd config.yaml shared_settings settings_01_demultiplexing 2>&1 | tee {log}"  
 
 rule stage_02_obitools_summaries:
     input: 
@@ -77,7 +91,7 @@ rule stage_02_obitools_summaries:
     benchmark:
      "benchmarks/stage_02.tsv"
     shell:
-      "Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/02_ObiTools4_Basic_Visualisation.Rmd config.yaml shared_settings 2>&1 | tee {log}"
+      "/usr/bin/time -l Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/02_ObiTools4_Basic_Visualisation.Rmd config.yaml shared_settings 2>&1 | tee {log}"
 
 rule stage_03_minimap2:
   input:
@@ -98,11 +112,29 @@ rule stage_03_minimap2:
   benchmark:
      "benchmarks/stage_03.tsv"
   shell: 
-    "Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/03_SNP_Genotyping_MiniMap2.Rmd config.yaml shared_settings settings_03_minimap2 2>&1 | tee {log}"
+    "/usr/bin/time -l Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/03_SNP_Genotyping_MiniMap2.Rmd config.yaml shared_settings settings_03_minimap2 2>&1 | tee {log}"
     
-
-
-
+rule stage_04_asp_genotyping:
+  input:
+    reads = asp_input_fastqs,
+    functions = "Code/R_scripts/asp_functions.R",
+    reference = config["shared_settings"]["reference_path"],
+    primer_panel = config["shared_settings"]["primer_panel_path"],
+    barcode_map = config["shared_settings"]["barcode_map_path"]
+  output:
+    html = "Code/HTMLs/04_SNP_Genotyping_ASP_primer.html",
+    genotypes = f"{asp_folder}/all_barcodes_asp_genotypes.tsv",
+    reads = f"{asp_folder}/all_barcodes_asp_reads.tsv"
+  params:
+    settings = stage_settings("Code/Rmd_Stages/04_SNP_Genotyping_ASP_primer.Rmd",["shared_settings", "settings_04_genotyping"])
+  threads:
+    config["shared_settings"]["n_cores"]
+  log:
+    "logs/stage_04.log"
+  benchmark:
+    "benchmarks/stage_04.tsv"
+  shell:
+    "/usr/bin/time -l Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/04_SNP_Genotyping_ASP_primer.Rmd config.yaml shared_settings settings_04_genotyping 2>&1 | tee {log}"
 
 
 
