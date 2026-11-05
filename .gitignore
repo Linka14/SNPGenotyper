@@ -56,3 +56,4 @@ Readme.rtf
 
 # Hidden snakemake files
 .snakemake/
+logs/
