@@ -8,9 +8,11 @@ dataset_name = config["shared_settings"]["dataset_name"]
 barcode_numbers = [f"{barcode_number:02d}" for barcode_number in range(1, config["shared_settings"]["n_barcodes"] + 1)]
 demultiplexed_folder = f"Data/Processed_data/{dataset_name}/Demultiplexed_sequence_data"
 raw_reads = glob.glob(f"Data/Raw_data/{dataset_name}/*.fastq") or glob.glob(f"Data/Raw_data/{dataset_name}/*.bam")
-dorado_fastqs = expand(demultiplexed_folder + "/Dorado_demultiplexed_by_sample/barcode{barcode}.fastq", barcode = barcode_numbers)
-identified_fastqs = expand(demultiplexed_folder + "/Identified_sample_sequences_Obi4/barcode{barcode}_identified.fastq", barcode = barcode_numbers)
-unidentified_fastqs = expand(demultiplexed_folder + "/Unidentified_sample_sequences_Obi4/barcode{barcode}_unidentified.fastq", barcode = barcode_numbers)
+dorado_fastqs = [f"{demultiplexed_folder}/Dorado_demultiplexed_by_sample/barcode{barcode}.fastq" for barcode in barcode_numbers]
+identified_fastqs = [f"{demultiplexed_folder}/Identified_sample_sequences_Obi4/barcode{barcode}_identified.fastq" for barcode in barcode_numbers]
+unidentified_fastqs = [f"{demultiplexed_folder}/Unidentified_sample_sequences_Obi4/barcode{barcode}_unidentified.fastq" for barcode in barcode_numbers]
+padded_fastqs = [f"{demultiplexed_folder}/Identified_padded_sample_sequences/barcode{barcode}_padded.fastq" for barcode in barcode_numbers]
+minimap2_folder = f"Results/{dataset_name}/Genotypes_results/MiniMap2_genotypes"
 
 # Settings each stage actually uses. Each rmd stage has settings in the yaml header 
 # which each one uses specifically, those are taken from the config.yaml sections. Otherwise changing the settings from Bayes stage
@@ -26,7 +28,8 @@ def stage_settings(stage_rmd, section_names):
   
 rule all:
     input:
-        "Code/HTMLs/02_ObiTools4_Basic_Visualisation.html"
+        "Code/HTMLs/02_ObiTools4_Basic_Visualisation.html",
+        "Code/HTMLs/03_SNP_Genotyping_MiniMap2.html"
 
 rule stage_01a_dorado: 
     input:
@@ -38,8 +41,10 @@ rule stage_01a_dorado:
       settings = stage_settings("Code/Rmd_Stages/01a_Dorado_Demultiplexing.Rmd", ["shared_settings", "settings_01_demultiplexing"])
     log:
       "logs/stage_01a.log"
+    benchmark:
+      "benchmarks/stage_01a.tsv"
     shell:
-        "Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/01a_Dorado_Demultiplexing.Rmd config.yaml shared_settings settings_01_demultiplexing 2>&1 | tee {log}"
+      "Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/01a_Dorado_Demultiplexing.Rmd config.yaml shared_settings settings_01_demultiplexing 2>&1 | tee {log}"
       
 rule stage_01b_obitools:
     input:
@@ -53,6 +58,8 @@ rule stage_01b_obitools:
       settings = stage_settings("Code/Rmd_Stages/01b_ObiTools4_Demultiplexing.Rmd", ["shared_settings", "settings_01_demultiplexing"])
     log:
       "logs/stage_01b.log"
+    benchmark:
+      "benchmarks/stage_01b.tsv"
     shell:
       "Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/01b_ObiTools4_Demultiplexing.Rmd config.yaml shared_settings settings_01_demultiplexing 2>&1 | tee {log}"  
 
@@ -62,10 +69,45 @@ rule stage_02_obitools_summaries:
       unidentified = unidentified_fastqs,
       barcode_map = config["shared_settings"]["barcode_map_path"]
     output:
-        "Code/HTMLs/02_ObiTools4_Basic_Visualisation.html"
+      "Code/HTMLs/02_ObiTools4_Basic_Visualisation.html"
     params:
       settings = stage_settings("Code/Rmd_Stages/02_ObiTools4_Basic_Visualisation.Rmd",["shared_settings"])
     log:
-        "logs/stage_02.log"
+      "logs/stage_02.log"
+    benchmark:
+     "benchmarks/stage_02.tsv"
     shell:
-        "Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/02_ObiTools4_Basic_Visualisation.Rmd config.yaml shared_settings 2>&1 | tee {log}"
+      "Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/02_ObiTools4_Basic_Visualisation.Rmd config.yaml shared_settings 2>&1 | tee {log}"
+
+rule stage_03_minimap2:
+  input:
+    dorado = dorado_fastqs,
+    identified = identified_fastqs,
+    reference = config["shared_settings"]["reference_path"],
+    primer_panel = config["shared_settings"]["primer_panel_path"],
+    barcode_map = config["shared_settings"]["barcode_map_path"]
+  output:
+    html = "Code/HTMLs/03_SNP_Genotyping_MiniMap2.html",
+    padded = padded_fastqs,
+    genotypes = f"{minimap2_folder}/all_barcodes_Minimap2_genotypes.tsv",
+    mapping = f"{minimap2_folder}/mapping_summary_03.tsv"
+  params:
+    settings = stage_settings("Code/Rmd_Stages/03_SNP_Genotyping_MiniMap2.Rmd", ["shared_settings", "settings_03_minimap2"])
+  log:
+    "logs/stage_03.log"
+  benchmark:
+     "benchmarks/stage_03.tsv"
+  shell: 
+    "Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/03_SNP_Genotyping_MiniMap2.Rmd config.yaml shared_settings settings_03_minimap2 2>&1 | tee {log}"
+    
+
+
+
+
+
+
+
+
+
+
+
