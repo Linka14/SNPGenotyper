@@ -59,7 +59,7 @@ settings_04_genotyping:
   min_errors: 1 # "errors" only, minimum errors allowed per primer
 
   # Read voting filters
-  max_mismatches: 2 # Inf switches it off
+  max_mismatches: 2 # .inf switches it off
 
 settings_05_bayesian:
   # What to run
