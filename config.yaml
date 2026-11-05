@@ -38,7 +38,6 @@ shared_settings:
 
 settings_01_demultiplexing:
   # Dorado demux
-  run_dorado: true # false skips dorado when its demultiplexed files already exist
   kit_name: "SQK-NBD114-24" # Nanopore barcoding kit
 
   # MANUAL FILE PREPARATION: NGSfilter file for obimultiplex, path from the project folder
