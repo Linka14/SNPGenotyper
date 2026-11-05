@@ -1,0 +1,116 @@
+# All the Master_pipeline.Rmd settings copied to one file, snakemake and render_tage.R later reads this file. Paths are written from the project folder
+
+shared_settings:
+  # Dataset
+  dataset_name: "big" # or "small", this also affects output directories
+  n_barcodes: 24 # 6 for the small dataset, 24 for the big dataset
+
+  # Tools: paths to the installed bin directories on this computer
+  dorado_bin_folder: ""
+  obitools_bin_folder: ""
+  minimap2_bin_folder: ""
+  samtools_bin_folder: ""
+
+  # Shared input files, paths from the project folder (should be added manually for different projects)
+  barcode_map_path: "Data/Supporting_data/Samples_ONT_barcodes.tsv"
+  primer_panel_path: "Data/Supporting_data/Primer_panels/12864_2021_7761_MOESM12_ESM_filtered.xlsx"
+  reference_path: "Data/Supporting_data/Genome_reference_data/snps_500bp_sequences.fa" # 1000 bp widened SNP reference genome
+
+  # Genotype calling, the same thresholds for Minimap2 and ASP genotyping
+  minimum_required_depth: 3 # minimum reads per sample x SNP to call a genotype
+  HT_min_frequence: 0.20 # minor allele fraction needed for HT
+  min_snp_quality: 10 # reads whose SNP base is below this Phred quality do not vote (ASP) / are not counted (Minimap2 mpileup -Q), 0 switches it off
+
+  # ASP run settings, shared by ASP genotyping and Bayesian genotyping (they make up the ASP results folder name)
+  n_cores: 4 # cores for ASP scoring, Stan chains and downsampling
+  input_type: "unpadded" # "padded" or "unpadded"
+  use_anchors: true # false for no anchors (I get better results with anchors, minimizes alignment hopping)
+  anchor_length: 3 # 1 to 5 reference bases after the SNP
+  probe_type: "asp_primers" # "asp_primers" or "reference" (reference needs input_type = "padded")
+  threshold_type: "errors" # naive "fraction" or updated "errors" with more settings
+  min_score_fraction: 0.65 # for "fraction" only, sets a threshold which is 0.65 * (perfect score of a primer alignment)
+  error_rate: 0.08 # for "errors" only, ~1 mismatch per 12.5 bases
+
+  # Strand check, shared by ASP genotyping and Bayesian genotyping
+  strand_flag_prob: 0.01 # strand check, a minor allele direction needs at least 8 reads on before it is flagged (strand bias flag)
+  expected_minor_fraction: 0.44 # derived from first results
+  strand_downgrade: false # true = flagged HT becomes HM, better to just flag first and then manually filter those if needed
+
+settings_01_demultiplexing:
+  # Dorado demux
+  run_dorado: true # false skips dorado when its demultiplexed files already exist
+  kit_name: "SQK-NBD114-24" # Nanopore barcoding kit
+
+  # MANUAL FILE PREPARATION: NGSfilter file for obimultiplex, path from the project folder
+  ngsfilter_path: "Data/Supporting_data/NGSfilter_file/ngsfilter.csv"
+
+settings_03_minimap2:
+  pad: 50 # bp of extra context restored on each side
+  snp_position: 500 # fixed SNP position within every 1000bp reference
+  minimum_mapping_quality_threshold: 20 # minimum mapping quality for a read to count toward a genotype call
+
+settings_04_genotyping:
+  # Alignment
+  primer_quality: 19 # Phred quality of every primer base
+  gap_opening: 6 # gap opening cost
+  gap_extension: 2 # gap extension cost
+
+  # Threshold
+  min_errors: 1 # "errors" only, minimum errors allowed per primer
+
+  # Read voting filters
+  max_mismatches: 2 # Inf switches it off
+
+settings_05_bayesian:
+  # What to run
+  run_stan: false # runs Bayes model
+  run_downsampling: false # runs downsampling and calibration statistics (needs run_stan = true in the same run)
+  run_stan_plots: true # runs visualisations (from this run, or from the saved run with the same settings)
+
+  # Genotype prior
+  prior_type: "ancestry" # "flat" = 1/3 each genotype, "het_share" = one heterozygote share for every pair, "hwe" = locus specific HWE priors from the panel frequencies or ancestry
+  prior_het_share: 0.15 # only used when prior_type == "het_share"
+  prior_population: "FreqWOLF_EastEurope" # only used when prior_type is set to "hwe": FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT, FreqWOLF_IB, FreqDOG
+  prior_floor: 0.001 # floors allele frequency so no genotype gets an exact-zero prior
+  ancestry_prior_shape: 1 # 1 is uniform Beta(1, 1) prior, doesnt assume anything
+  phi_hom_structure: "shared" #"shared", "locus", "sample", "locus_sample"
+
+  # Stan sampling
+  stan_iter: 4000
+  stan_warmup: 1500
+  stan_chains: 4
+  stan_adapt_delta: 0.95
+  max_error: 0.10 # cap on any error rate
+
+  # Downsampling and genotype confidence calibration
+  read_depths_to_test: [3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 75]
+  draws_per_depth: 300
+  minimum_reads_for_truth_pair: 75
+  bootstrap_rounds: 1000
+
+settings_06_visualization:
+  run_basic_plots: true
+  run_filtration_parameters: true
+  run_speedopt_diagnosis: true
+  run_filtration_vis: true
+
+settings_07_failed_genotypes:
+  failed_genotypes_source: "asp_genotypes" # "bayes_genotypes" or "asp_genotypes", which genotype calls are compared with the reference
+  failed_max_reads_plotted: 20 # reads drawn per plot, the .tsv table keeps every read
+
+settings_08_ancestry_validation:
+  genotype_prior_type: "flat" # prior should be flat not ancestry (circularity, using ancestry priors for genotype call them using same genotypes for ancestry validation)
+  gq_cutoff: 20 # Cutoff for genotypes, I could use 25 as previously calculated in the genotypes cutoff plot
+
+  # Simulated reference animals from the primer panel with allele frequencies
+  reference_source: "real" # or "simulated"
+  reference_ped_path: "Data/Supporting_data/Reference_populations/GTIC-D-20-00312R1.ped" # reference pops from Dryad
+  reference_map_path: "Data/Supporting_data/Reference_populations/GTIC-D-20-00312R1.map"
+  reference_wolf_groups: ["wolGer", "wolRom", "wolFin", "wolRus"] # EastEuropean sub populations
+  reference_dog_groups: ["dog_Illumina", "dog_nonpedigree"]
+  wolf_frequency_column: "FreqWOLF_EastEurope" # FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT or FreqWOLF_IB
+  dog_frequency_column: "FreqDOG"
+  n_reference_wolves: 186 # or 186 for "real" setting (that is the max number of wolves for EastEuropean subpops)
+  n_reference_dogs: 186
+  n_simulated_per_hybrid_class: 186 # for F1, first and second backcrosses
+  simulation_seed: 1

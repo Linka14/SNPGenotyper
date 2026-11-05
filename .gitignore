@@ -53,3 +53,6 @@ Readme.rtf
 .Rapp.history
 .RData
 ~$*
+
+# Hidden snakemake files
+.snakemake/
