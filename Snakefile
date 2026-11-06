@@ -26,7 +26,7 @@ identified_fastqs = [f"{demultiplexed_folder}/Identified_sample_sequences_Obi4/b
 unidentified_fastqs = [f"{demultiplexed_folder}/Unidentified_sample_sequences_Obi4/barcode{barcode}_unidentified.fastq" for barcode in barcode_numbers]
 padded_fastqs = [f"{demultiplexed_folder}/Identified_padded_sample_sequences/barcode{barcode}_padded.fastq" for barcode in barcode_numbers]
 minimap2_folder = f"Results/{dataset_name}/Genotypes_results/MiniMap2_genotypes"
-
+locus_summary = f"Results/{dataset_name}/Graphics/Demultiplexing_and_Filtration_Visualization/locus_indel_homopolymer_summary.tsv"
 ### Stage 04 prep: reads different input fastq files based on input_type setting, those are either "padded" or "unpadded" reads.
 asp_input_fastqs = padded_fastqs if config["shared_settings"]["input_type"] == "padded" else identified_fastqs
 
@@ -55,7 +55,7 @@ rule all:
     input:
         "Code/HTMLs/02_ObiTools4_Basic_Visualisation.html",
         "Code/HTMLs/03_SNP_Genotyping_MiniMap2.html",
-        f"{downsampling_folder}/downsampling_plot_inputs.rds"
+        "Code/HTMLs/06b_Genotyping_Results.html"
 
 rule stage_01a_dorado: 
     input:
@@ -197,6 +197,73 @@ rule stage_05b_downsampling:
   shell:
     "{params.timer} Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/05b_Downsampling_Calibration.Rmd config.yaml shared_settings settings_05_bayesian 2>&1 | tee {log}"
 
+rule stage_06a_diagnostics:
+    input:
+        asp_reads = f"{asp_folder}/all_barcodes_asp_reads.tsv",
+        asp_genotypes = f"{asp_folder}/all_barcodes_asp_genotypes.tsv",
+        bayes_genotypes = f"{bayes_folder}/all_barcodes_base_mixture_genotypes_hierarchical.tsv",
+        reference_genotypes = f"Data/Supporting_data/Reference_genotypes/genotypes_{dataset_name}.tsv",
+        raw_reads = raw_reads,
+        dorado = dorado_fastqs,
+        identified = identified_fastqs,
+        unidentified = unidentified_fastqs,
+        padded = padded_fastqs,
+        reference = config["shared_settings"]["reference_path"],
+        primer_panel = config["shared_settings"]["primer_panel_path"],
+        functions = "Code/R_scripts/asp_functions.R"
+    output:
+        html = "Code/HTMLs/06a_Pipeline_Diagnostics.html",
+        locus_summary = locus_summary
+    params:
+        settings = stage_settings("Code/Rmd_Stages/06a_Pipeline_Diagnostics.Rmd", ["shared_settings", "settings_04_genotyping", "settings_05_bayesian"]),
+        timer = config["workflow_settings"]["timer_command"]
+    threads:
+        config["shared_settings"]["n_cores"]
+    log:
+        "logs/stage_06a.log"
+    benchmark:
+        "benchmarks/stage_06a.tsv"
+    shell:
+        "{params.timer} Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/06a_Pipeline_Diagnostics.Rmd config.yaml shared_settings settings_04_genotyping settings_05_bayesian 2>&1 | tee {log}"
 
+rule stage_06b_results:
+    input:
+        asp_genotypes = f"{asp_folder}/all_barcodes_asp_genotypes.tsv",
+        bayes_genotypes = f"{bayes_folder}/all_barcodes_base_mixture_genotypes_hierarchical.tsv",
+        minimap2_genotypes = f"{minimap2_folder}/all_barcodes_Minimap2_genotypes.tsv",
+        reference_genotypes = f"Data/Supporting_data/Reference_genotypes/genotypes_{dataset_name}.tsv",
+        stan_results = f"{bayes_folder}/stan_plot_inputs.rds",
+        downsampling_results = f"{downsampling_folder}/downsampling_plot_inputs.rds",
+        locus_summary = locus_summary,
+        functions = "Code/R_scripts/asp_functions.R",
+        primer_panel = config["shared_settings"]["primer_panel_path"],
+        reference = config["shared_settings"]["reference_path"]
+    output:
+        "Code/HTMLs/06b_Genotyping_Results.html"
+    params:
+        settings = stage_settings("Code/Rmd_Stages/06b_Genotyping_Results.Rmd", ["shared_settings", "settings_05_bayesian"]),
+        timer = config["workflow_settings"]["timer_command"]
+    log:
+        "logs/stage_06b.log"
+    benchmark:
+        "benchmarks/stage_06b.tsv"
+    shell:
+        "{params.timer} Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/06b_Genotyping_Results.Rmd config.yaml shared_settings settings_05_bayesian 2>&1 | tee {log}"
 
+rule stage_06c_speed:
+    input:
+        asp_reads = f"{asp_folder}/all_barcodes_asp_reads.tsv",
+        reference_genotypes = f"Data/Supporting_data/Reference_genotypes/genotypes_{dataset_name}.tsv",
+        functions = "Code/R_scripts/asp_functions.R"
+    output:
+        "Code/HTMLs/06c_Speed_Optimisation.html"
+    params:
+        settings = stage_settings("Code/Rmd_Stages/06c_Speed_Optimisation.Rmd", ["shared_settings"]),
+        timer = config["workflow_settings"]["timer_command"]
+    log:
+        "logs/stage_06c.log"
+    benchmark:
+        "benchmarks/stage_06c.tsv"
+    shell:
+        "{params.timer} Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/06c_Speed_Optimisation.Rmd config.yaml shared_settings 2>&1 | tee {log}"
 

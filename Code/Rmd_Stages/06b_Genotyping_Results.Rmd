@@ -1,0 +1,1746 @@
+---
+title: "Stage 06b: Genotyping results"
+subtitle: "`r paste0('Dataset: ', params$dataset_name, ' - ', params$n_barcodes, ' barcodes')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: hide
+    df_print: kable
+    highlight: tango
+    theme:
+      version: 5
+      bg: "#FFFFFF"
+      fg: "#2E2A26"
+      primary: "#657359"
+      secondary: "#8B775F"
+      base_font: "Times New Roman"
+      heading_font: "Times New Roman"
+      headings-font-weight: 700
+      code_font:
+        google: "JetBrains Mono"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+params:
+  # Dataset
+  dataset_name: "big" # small or big
+  n_barcodes: 24 # 6 for the small dataset, 24 for the big dataset
+
+  # Shared input files, paths from the project folder
+  primer_panel_path: "Data/Supporting_data/Primer_panels/12864_2021_7761_MOESM12_ESM_filtered.xlsx"
+  reference_path: "Data/Supporting_data/Genome_reference_data/snps_500bp_sequences.fa"
+
+  # ASP run to plot, these are the same as the master pipeline of the current run (they also make up its results folder name)
+  input_type: "unpadded" # "padded" or "unpadded"
+  probe_type: "asp_primers" # "asp_primers" or "reference"
+  use_anchors: true
+  anchor_length: 3
+  threshold_type: "errors" # "fraction" or "errors"
+  min_score_fraction: 0.65 # "fraction" only
+  error_rate: 0.08 # for "errors" only
+
+  # Bayesian run to plot (same settings as Bayesian genotyping, the prior makes up its results folder name)
+  prior_type: "ancestry" # "flat", "het_share" or "hwe"
+  prior_het_share: 0.15 # only used when prior_type == "het_share"
+  prior_population: "FreqWOLF_EastEurope" # only used when prior_type == hwe"
+  prior_floor: 0.001 # only used when prior_type == "hwe"
+  ancestry_prior_shape: 1 # only used when prior_type is "ancestry"
+  phi_hom_structure: "shared" # "shared", "locus", "sample" or "locus_sample"
+  stan_iter: 4000
+  stan_warmup: 1500
+  stan_chains: 4
+  max_error: 0.10
+  read_depths_to_test: [3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 75]
+  draws_per_depth: 300
+  minimum_reads_for_truth_pair: 75
+  bootstrap_rounds: 1000
+  strand_downgrade: false
+---
+
+```{r knitr_options, include = FALSE}
+library(knitr)
+opts_chunk$set(comment = "", message = FALSE, class.output = "scroll-output")
+```
+
+```{css, echo = FALSE}
+pre, pre code { white-space: pre-wrap; word-break: break-word; }
+.scroll-output { max-height: 250px; overflow-y: auto; }
+p, li { text-align: justify; hyphens: auto; }
+```
+
+This script uses a lot of different chunks to visualize different genotyping results from different methods. Its really kinda long, before every chunk is a quick description of what im trying to show with the plots and some ideas and questions I was trying to answer with the visualization. Plots are saved inside Results/dataset_name/Graphics/...
+
+After completing this script, move on to Stage 06c: Speed optimisation
+
+## Settings, paths and basic setup
+This chunks contain libraries, global settings, editable variables used by the whole .Rmd and paths for necessary input files.
+
+```{r setup, results = "hide"}
+suppressMessages({
+  library(grid)
+  library(Biostrings) # loaded first because of shared functions names with dplyr
+  library(ggplot2)
+  library(dplyr)
+  library(tidyr)
+  library(readr)
+  library(readxl)
+  library(patchwork)
+  library(scales)
+  library(knitr)
+  library(rstan)
+  library(bayesplot)
+})
+
+# Settings come from the params block in the YAML header, this turns them into usable variables
+invisible(list2env(params, envir = environment()))
+settings_used <- data.frame(setting = c("run_date", names(params)),
+                            value = c(format(Sys.time(), "%Y-%m-%d %H:%M"),
+                                      vapply(params, function(setting_value) paste(setting_value, collapse = ", "), character(1))))
+# Uploading shared functions
+source("Code/R_scripts/asp_functions.R", local = TRUE)
+
+plot_font <- "Times New Roman"
+theme_set(theme_minimal(base_family = plot_font))
+hm_dark <- "#476F84"
+ht_dark <- "#A4552A"
+correct_colour <- "#72874E" # correct calls, reads used
+error_colour <- "#d73027" # miscalls, incorrect calls, removing cutoffs
+no_call_colour <- "grey70"
+no_reference_colour <- "grey97"
+method_colours <- c(ASP = "#834D24", ASP_bayesian = "#834D24", minimap2 = "#E1C473")
+group_colours <- c("All pairs" = "grey25", "True homozygotes" = hm_dark, "True heterozygotes" = ht_dark)
+# Paths for genotype and graphics outputs
+graphics_dir <- file.path("Results", dataset_name, "Graphics") 
+genotypes_dir <- file.path("Results", dataset_name, "Genotypes_results")
+
+# Shared function for building accurate settings based folder names
+run_names <- build_run_names(input_type, use_anchors, anchor_length, threshold_type, error_rate, min_score_fraction,
+                             prior_type, prior_het_share, prior_population, prior_floor, probe_type = probe_type,
+                             ancestry_prior_shape = ancestry_prior_shape, phi_hom_structure = phi_hom_structure)
+asp_run_name <- run_names$asp_run_name
+bayes_run_name <- run_names$bayes_run_name
+
+asp_path <- file.path(genotypes_dir, asp_run_name, "all_barcodes_asp_genotypes.tsv") # ASP Genotyper results and per read calls
+mm2_path <- file.path(genotypes_dir, "MiniMap2_genotypes/all_barcodes_Minimap2_genotypes.tsv") # MiniMap2 genotype results
+bayes_path <- file.path(genotypes_dir, bayes_run_name, "all_barcodes_base_mixture_genotypes_hierarchical.tsv") # ASP Hierarchical Bayes Genotyper results
+ref_path <- file.path("Data/Supporting_data/Reference_genotypes", paste0("genotypes_", dataset_name, ".tsv")) # Genotype references
+
+# Primer panel preparation with a shared function and the same scoring lookups for scoring threshold, problematic locus and Sankey plots
+panel <- prepare_primer_panel(primer_panel_path, reference_path, input_type, use_anchors, anchor_length, probe_type = probe_type)
+
+# Output paths for Identified, Bayes and MiniMap2 plots
+out_dir <- file.path(graphics_dir, "ASP_Genotypes_Results_Plots")
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+bayes_run_graphics_dir <- file.path(graphics_dir, "STAN_Hierarchical", run_names$bayes_settings_label) 
+stan_graphics_folder <- bayes_run_graphics_dir # the same folder, under the name the Stan plot chunks use
+read_depths_to_test <- unlist(read_depths_to_test)
+downsampling_output_folder <- file.path(stan_graphics_folder, paste0("Downsampling_calibration", if (strand_downgrade) "_sdown" else "_sflag", sprintf("_r%d_d%d_n%d", minimum_reads_for_truth_pair, max(read_depths_to_test), draws_per_depth)))
+  
+bayes_out_dir <- file.path(bayes_run_graphics_dir, "Basic_Results_Plots")
+dir.create(bayes_out_dir, recursive = TRUE, showWarnings = FALSE)
+mm2_out_dir <- file.path(graphics_dir, "Minimap2_Genotypes_Results_Plots")
+dir.create(mm2_out_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Imported shared data between all chunks, loaded and cleaned once in setup
+asp_results <- read_tsv(asp_path, show_col_types = FALSE)
+asp <- asp_results %>%
+  transmute(sample = barcode, locus, genotype, method = "ASP")
+
+bayes_raw <- read_tsv(bayes_path, show_col_types = FALSE)
+bayes_asp <- bayes_raw %>%
+  transmute(sample = barcode, locus, genotype, method = "ASP_bayesian", status)
+
+mm2_raw <- read_tsv(mm2_path, show_col_types = FALSE)
+mm2 <- mm2_raw %>%
+  transmute(sample = barcode, locus, genotype, method = "minimap2")
+
+ref <- read_tsv(ref_path, show_col_types = FALSE) %>%
+  transmute(sample = sample_id, locus, genotype, method = "reference")
+```
+
+
+
+## Basic visualization for ASP genotypes results 
+This chunk contains first visualizations for my ASP Genotypes results. It creates some basic plots, which are mostly visually useless, not that pretty and just get the basic points across. This plots are just results simply visualized, like concordance per locus and sample in comparison with MiniMap2 genotypes, some prettier violins plots for depth. It also creates a genotypes_comparison.tsv table.
+
+```{r Basic_Visualization_for_ASP_Genotypes_results, fig.width = 11.69, fig.height = 8.27, out.width = "100%"}
+# Full data frame with all the genotypes
+all_calls <- bind_rows(asp, mm2, ref)
+
+# Comparison table sample and locus pairs per row and a match column per method
+wide <- all_calls %>%
+  pivot_wider(names_from = method, values_from = genotype) %>%
+  complete(sample, locus) %>% 
+  mutate(asp_match = ASP == reference, # T or F, NA if one is missing
+         mm2_match = minimap2 == reference,
+         methods_agree = ASP == minimap2)
+
+write.table(wide, file.path(out_dir, "full_comparison_table_identified.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
+
+# 1. Plot: Creates called genotypes heatmap per method
+genotype_colours <- c(
+  "AA" = "#593722",
+  "CC" = "#2C5724",
+  "GG" = "#476F84",
+  "TT" = "#AB5D26",
+  "AC" = "#A4B591",
+  "AG" = "#E1C473",
+  "AT" = "#D9A877",
+  "CG" = "#A4BED5",
+  "CT" = "#A8939E",
+  "GT" = "#7F919B",
+  "No call" = no_call_colour)
+
+plot_data <- all_calls %>%
+  mutate(genotype_display = ifelse(is.na(genotype), "No call", genotype))
+
+p1 <- ggplot(plot_data, aes(x = sample, y = locus, fill = genotype_display)) +
+  geom_tile(colour = "white", linewidth = 0.2) +
+  facet_wrap(~method, ncol = 3) + # Splits into 3 panels
+  scale_fill_manual(values = genotype_colours, name = "Genotype") + 
+  labs(title = "Genotype calls by method", x = "Sample", y = "Locus") +
+  theme_minimal(base_family = plot_font, base_size = 8) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5), 
+        legend.title = element_text(face = "bold"),
+        strip.text = element_text(face = "bold"), 
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 6),
+        panel.grid = element_blank())
+
+ggsave(file.path(out_dir, "genotype_heatmap_by_method.png"), p1,
+       width = 14, height = max(6, length(unique(plot_data$locus)) * 0.15 + 2), dpi = 300, limitsize = FALSE, bg = "white")
+ggsave(file.path(out_dir, "genotype_heatmap_by_method.pdf"), p1,
+       width = 14, height = max(6, length(unique(plot_data$locus)) * 0.15 + 2), limitsize = FALSE, device = cairo_pdf)
+print(p1)
+
+# 2. Plot: Genotype match rate per sample
+per_sample <- wide %>%
+  filter(!is.na(reference)) %>%
+  group_by(sample) %>%
+  summarise(
+    ASP = mean(asp_match, na.rm = TRUE),
+    minimap2 = mean(mm2_match, na.rm = TRUE)) %>%
+  pivot_longer(cols = c(ASP, minimap2), names_to = "method", values_to = "match_rate")
+
+p2 <- ggplot(per_sample, aes(x = match_rate, y = reorder(sample, -match_rate), fill = method)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.8) +
+  geom_text(aes(label = ifelse(match_rate < 1, percent(match_rate, accuracy = 0.1), "")),
+            position = position_dodge(width = 0.8), hjust = -0.15, size = 2.6) +
+  scale_fill_manual(values = method_colours, name = NULL) +
+  scale_x_continuous(labels = percent, expand = expansion(mult = c(0, 0.08))) +
+  labs(title = "Match rate vs reference, per sample (worst at the top)", x = "Match rate", y = "Sample") +
+  theme_minimal(base_family = plot_font, base_size = 11) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "top",
+        panel.grid.major.y = element_blank(), panel.grid.minor = element_blank())
+
+ggsave(file.path(out_dir, "concordance_per_sample.png"), p2, width = 8.27, height = 11.69, dpi = 300, bg = "white")
+ggsave(file.path(out_dir, "concordance_per_sample.pdf"), p2, width = 8.27, height = 11.69, device = cairo_pdf)
+print(p2)
+
+# 3. Plot: Result concordance per locus
+per_locus <- wide %>%
+  filter(!is.na(reference)) %>%
+  group_by(locus) %>%
+  summarise(
+    ASP = mean(asp_match, na.rm = TRUE),
+    minimap2 = mean(mm2_match, na.rm = TRUE)) %>%
+  pivot_longer(cols = c(ASP, minimap2), names_to = "method", values_to = "match_rate")
+
+# Average for both method, worst first
+locus_avg <- per_locus %>% 
+  group_by(locus) %>%
+  summarise(avg_match = mean(match_rate, na.rm = TRUE)) %>%
+  arrange(avg_match)
+
+p3 <- ggplot(per_locus, aes(x = match_rate, y = reorder(locus, -match_rate), fill = method)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.8) +
+  geom_text(aes(label = ifelse(match_rate < 1, percent(match_rate, accuracy = 0.1), "")),
+            position = position_dodge(width = 0.8), hjust = -0.15, size = 2.6) +
+  scale_fill_manual(values = method_colours, name = NULL) +
+  scale_x_continuous(labels = percent, expand = expansion(mult = c(0, 0.08))) +
+  labs(title = "Match rate vs reference, per locus (worst at the top)", x = "Match rate", y = "Locus") +
+  theme_minimal(base_family = plot_font, base_size = 11) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "top",
+        panel.grid.major.y = element_blank(), panel.grid.minor = element_blank())
+
+ggsave(file.path(out_dir, "concordance_per_locus.png"), p3, width = 8.27, height = 11.69, dpi = 300, bg = "white")
+ggsave(file.path(out_dir, "concordance_per_locus.pdf"), p3, width = 8.27, height = 11.69, device = cairo_pdf)
+print(p3)
+
+# 4. Plot: Same as first heatmap just simpler with only red and green values for correct and incorrect called genotypes
+match_data <- wide %>%
+  select(sample, locus, reference, ASP = asp_match, minimap2 = mm2_match) %>%
+  pivot_longer(cols = c(ASP, minimap2), names_to = "method", values_to = "is_match") %>%
+  mutate(
+    match_category = case_when(
+      is.na(reference) ~ "No reference",
+      is.na(is_match) ~ "No call",
+      is_match ~ "Correct",
+      TRUE ~ "Incorrect"))
+
+p4 <- ggplot(match_data, aes(x = sample, y = locus, fill = match_category)) +
+  geom_tile(colour = "white", linewidth = 0.2) +
+  facet_wrap(~method, ncol = 2) +
+  scale_fill_manual(
+    values = c("Correct" = correct_colour, "Incorrect" = error_colour,
+               "No call" = no_call_colour, "No reference" = no_reference_colour),
+    name = "Result") +
+  labs(title = "Genotype calls vs reference truth", x = "Sample", y = "Locus") +
+  theme_minimal(base_family = plot_font, base_size = 8) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5), 
+        legend.title = element_text(face = "bold"),
+        strip.text = element_text(face = "bold"), 
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 6),
+        panel.grid = element_blank())
+
+ggsave(file.path(out_dir, "genotype_match_heatmap.png"), p4, width = max(9, length(unique(match_data$sample)) * 0.5 + 3),
+       height = max(6, length(unique(match_data$locus)) * 0.15 + 2), dpi = 300, limitsize = FALSE, bg = "white")
+ggsave(file.path(out_dir, "genotype_match_heatmap.pdf"), p4, width = max(9, length(unique(match_data$sample)) * 0.5 + 3),
+       height = max(6, length(unique(match_data$locus)) * 0.15 + 2), limitsize = FALSE, device = cairo_pdf)
+print(p4)
+
+# 5. Plot: Depth per locus and locus family in violin plots 
+depth_family_pattern <- "^(BICF2P|BICF2S|BICF2G|TIGRP2P)"
+
+# Creates locus families from the names prefix
+depth_data <- asp_results %>%
+  transmute(sample = barcode, locus, depth,
+            locus_group = ifelse(grepl(depth_family_pattern, locus), sub(paste0(depth_family_pattern, ".*"), "\\1", locus), "Other"))
+
+depth_fills <- c("all" = "#A4B591", "BICF2P" = "#AB5D26", "BICF2S" = "#E1C473", "BICF2G" = "#55804D", "TIGRP2P" = "#593722", "Other" = "grey70")
+
+# One violin plot per row
+depth_violin_f <- function(data, title, x_label, y_label) {
+  medians <- data %>%
+    group_by(row) %>%
+    summarise(median_depth = median(depth, na.rm = TRUE), max_depth = max(depth, na.rm = TRUE))
+
+  ggplot(data, aes(x = depth, y = row)) +
+    geom_violin(aes(fill = fill_group), colour = "grey20", linewidth = 0.4, alpha = 0.6, scale = "width") +
+    geom_boxplot(width = 0.15, fill = "white", colour = "grey30", outlier.shape = NA, linewidth = 0.3) +
+    geom_jitter(height = 0.12, width = 0, size = 0.5, alpha = 0.35, colour = "grey30") +
+    geom_point(data = medians, aes(x = median_depth, y = row), colour = "grey10", size = 1.2, inherit.aes = FALSE) +
+    geom_segment(data = medians, aes(x = median_depth, xend = max_depth * 1.12, y = row, yend = row),
+                 linetype = "dashed", colour = "grey30", linewidth = 0.3, inherit.aes = FALSE) +
+    geom_label(data = medians, aes(x = max_depth * 1.15, y = row, label = sprintf("median = %.0f", median_depth)),
+               hjust = 0, size = 2, fill = "white", linewidth = 0.2, inherit.aes = FALSE) +
+    scale_fill_manual(values = depth_fills, name = "Locus\ngroup",
+                      guide = if (n_distinct(data$fill_group) > 1) "legend" else "none") + # legend only when coloured by family
+    scale_x_continuous(expand = expansion(mult = c(0.02, 0.25))) +
+    scale_y_discrete(expand = expansion(add = 0.9)) + # space between the rows
+    theme_minimal(base_family = plot_font, base_size = 8) +
+    theme(axis.text.y = element_text(size = 6),
+          panel.grid.minor = element_blank(),
+          panel.grid.major.y = element_blank(),
+          plot.title = element_text(hjust = 0.5, face = "bold")) +
+    labs(title = title, x = x_label, y = y_label)
+}
+
+# Depth per locus ordered by median depth, violin plots
+depth_plot_locus <- depth_violin_f(depth_data %>% mutate(row = reorder(locus, depth, FUN = median, na.rm = TRUE), fill_group = "all"), "Number of reads distribution per locus", "Reads per sample", "Locus")
+print(depth_plot_locus)
+ggsave(file.path(out_dir, "read_distribution_per_locus_violin.png"), depth_plot_locus, width = 8.27, height = 11.69, dpi = 300, bg = "white")
+ggsave(file.path(out_dir, "read_distribution_per_locus_violin.pdf"), depth_plot_locus, width = 8.27, height = 11.69, device = cairo_pdf)
+
+# 6. Plot: Depth per sample ordered by median depth, violin plots
+depth_plot_sample <- depth_violin_f(depth_data %>% mutate(row = reorder(sample, depth, FUN = median, na.rm = TRUE), fill_group = "all"), "Number of reads distribution per sample", "Reads per locus", "Sample")
+print(depth_plot_sample)
+ggsave(file.path(out_dir, "read_distribution_per_sample_violin.png"), depth_plot_sample, width = 8.27, height = 11.69, dpi = 300, bg = "white")
+ggsave(file.path(out_dir, "read_distribution_per_sample_violin.pdf"), depth_plot_sample, width = 8.27, height = 11.69, device = cairo_pdf)
+
+# 7. Plot: Depth per locus family ordered in groups by median depth, violin plots
+depth_grouped_order <- depth_data %>%
+  group_by(locus_group, locus) %>%
+  summarise(median_depth = median(depth, na.rm = TRUE), .groups = "drop") %>%
+  arrange(locus_group, median_depth) %>%
+  pull(locus)
+
+depth_plot_grouped <- depth_violin_f(depth_data %>% mutate(row = factor(locus, levels = depth_grouped_order), fill_group = locus_group), "Read depth distribution per locus, grouped by locus family", "Reads per sample", "Locus")
+print(depth_plot_grouped)
+ggsave(file.path(out_dir, "read_depth_per_locus_grouped_violin.png"), depth_plot_grouped, width = 8.27, height = 11.69, dpi = 300, bg = "white")
+ggsave(file.path(out_dir, "read_depth_per_locus_grouped_violin.pdf"), depth_plot_grouped, width = 8.27, height = 11.69, device = cairo_pdf)
+```
+
+
+
+## Hierarchical bayes base mixture type 
+This chunk contains the same first version of visualizations created for hierarchical Bayes model, same plots as the previous chunk just changed input paths and output paths for Bayes.
+
+```{r Hierarchical_Bayes_Genotypes_Visualisation, fig.width = 11.69, fig.height = 8.27, out.width = "100%"}
+# Same chunks before it just uses Bayesian Genotypes results tables imported and cleaned in the setup chunk
+bayes_all_calls <- bind_rows(select(bayes_asp, -status), mm2, ref)
+
+# Comparison table sample and locus pairs per row and a match column per method
+bayes_wide <- bayes_all_calls %>%
+  pivot_wider(names_from = method, values_from = genotype) %>%
+  complete(sample, locus) %>% 
+  mutate(asp_match = ASP_bayesian == reference, # T or F, NA if one is missing
+         mm2_match = minimap2 == reference)
+
+write.table(bayes_wide, file.path(bayes_out_dir, "full_comparison_table_bayesian_mixpooled.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
+
+# 1. Plot: Creates called genotypes heatmap per method
+bayes_plot_data <- bayes_all_calls %>%
+  mutate(genotype_display = ifelse(is.na(genotype), "No call", genotype))
+
+p_bayes_genotypes <- ggplot(bayes_plot_data, aes(x = sample, y = locus, fill = genotype_display)) +
+  geom_tile(colour = "white", linewidth = 0.2) +
+  facet_wrap(~method, ncol = 3) +
+  scale_fill_manual(values = genotype_colours, name = "Genotype") +
+  labs(title = "Genotype calls by method (pooled Bayesian mixture ASP)", x = "Sample", y = "Locus") +
+  theme_minimal(base_family = plot_font, base_size = 8) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5), 
+        legend.title = element_text(face = "bold"),
+        strip.text = element_text(face = "bold"), 
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 6),
+        panel.grid = element_blank())
+
+ggsave(file.path(bayes_out_dir, "genotype_heatmap_by_method_bayesian_mixpooled.png"), p_bayes_genotypes,
+       width = max(14, length(unique(bayes_plot_data$sample)) * 0.5 + 4),
+       height = max(6, length(unique(bayes_plot_data$locus)) * 0.15 + 2), dpi = 300, limitsize = FALSE, bg = "white")
+ggsave(file.path(bayes_out_dir, "genotype_heatmap_by_method_bayesian_mixpooled.pdf"), p_bayes_genotypes,
+       width = max(14, length(unique(bayes_plot_data$sample)) * 0.5 + 4),
+       height = max(6, length(unique(bayes_plot_data$locus)) * 0.15 + 2), limitsize = FALSE, device = cairo_pdf)
+p_bayes_genotypes
+
+# 2. Plot: Genotype match rate per sample
+bayes_per_sample <- bayes_wide %>%
+  filter(!is.na(reference)) %>%
+  group_by(sample) %>%
+  summarise(
+    ASP_bayesian = mean(asp_match, na.rm = TRUE),
+    minimap2 = mean(mm2_match, na.rm = TRUE)) %>%
+  pivot_longer(cols = c(ASP_bayesian, minimap2), names_to = "method", values_to = "match_rate")
+
+p_bayes_per_sample <- ggplot(bayes_per_sample, aes(x = match_rate, y = reorder(sample, -match_rate), fill = method)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.8) +
+  geom_text(aes(label = ifelse(match_rate < 1, percent(match_rate, accuracy = 0.1), "")),
+            position = position_dodge(width = 0.8), hjust = -0.15, size = 2.6) +
+  scale_fill_manual(values = method_colours, name = NULL) +
+  scale_x_continuous(labels = percent, expand = expansion(mult = c(0, 0.08))) +
+  labs(title = "Match rate vs reference, per sample (pooled Bayesian mixture ASP, worst at the top)", x = "Match rate", y = "Sample") +
+  theme_minimal(base_family = plot_font, base_size = 11) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "top",
+        panel.grid.major.y = element_blank(), panel.grid.minor = element_blank())
+
+ggsave(file.path(bayes_out_dir, "concordance_per_sample_bayesian_mixpooled.png"), p_bayes_per_sample, width = 8.27, height = 11.69, dpi = 300, bg = "white")
+ggsave(file.path(bayes_out_dir, "concordance_per_sample_bayesian_mixpooled.pdf"), p_bayes_per_sample, width = 8.27, height = 11.69, device = cairo_pdf)
+print(p_bayes_per_sample)
+
+# 3. Plot: Result concordance per locus
+bayes_per_locus <- bayes_wide %>%
+  filter(!is.na(reference)) %>%
+  group_by(locus) %>%
+  summarise(
+    ASP_bayesian = mean(asp_match, na.rm = TRUE),
+    minimap2 = mean(mm2_match, na.rm = TRUE)) %>%
+  pivot_longer(cols = c(ASP_bayesian, minimap2), names_to = "method", values_to = "match_rate")
+
+bayes_locus_avg <- bayes_per_locus %>% # average of both methods per locus, worst first
+  group_by(locus) %>%
+  summarise(avg_match = mean(match_rate, na.rm = TRUE)) %>%
+  arrange(avg_match)
+
+p_bayes_per_locus <- ggplot(bayes_per_locus, aes(x = match_rate, y = reorder(locus, -match_rate), fill = method)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.8) +
+  geom_text(aes(label = ifelse(match_rate < 1, percent(match_rate, accuracy = 0.1), "")),
+            position = position_dodge(width = 0.8), hjust = -0.15, size = 2.6) +
+  scale_fill_manual(values = method_colours, name = NULL) +
+  scale_x_continuous(labels = percent, expand = expansion(mult = c(0, 0.08))) +
+  labs(title = "Match rate vs reference, per locus (pooled Bayesian mixture ASP, worst at the top)", x = "Match rate", y = "Locus") +
+  theme_minimal(base_family = plot_font, base_size = 11) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "top",
+        panel.grid.major.y = element_blank(), panel.grid.minor = element_blank())
+
+ggsave(file.path(bayes_out_dir, "concordance_per_locus_bayesian_mixpooled.png"), p_bayes_per_locus, width = 8.27, height = 11.69, dpi = 300, bg = "white")
+ggsave(file.path(bayes_out_dir, "concordance_per_locus_bayesian_mixpooled.pdf"), p_bayes_per_locus, width = 8.27, height = 11.69, device = cairo_pdf)
+print(p_bayes_per_locus)
+
+# 4. Plot: Same as first heatmap just simpler with only red and green values for correct and incorrect called genotypes
+bayes_match_data <- bayes_wide %>%
+  select(sample, locus, reference, ASP = asp_match, minimap2 = mm2_match) %>%
+  pivot_longer(cols = c(ASP, minimap2), names_to = "method", values_to = "is_match") %>%
+  mutate(
+    match_category = case_when(
+      is.na(reference) ~ "No reference",
+      is.na(is_match) ~ "No call",
+      is_match ~ "Correct",
+      TRUE ~ "Incorrect"))
+
+p_bayes_match <- ggplot(bayes_match_data, aes(x = sample, y = locus, fill = match_category)) +
+  geom_tile(colour = "white", linewidth = 0.2) +
+  facet_wrap(~method, ncol = 2) +
+  scale_fill_manual(
+    values = c("Correct" = correct_colour, "Incorrect" = error_colour, "No call" = no_call_colour, "No reference" = no_reference_colour),
+    name = "Result") +
+  labs(title = "Genotype calls vs reference truth (pooled Bayesian mixture ASP)", x = "Sample", y = "Locus") +
+  theme_minimal(base_family = plot_font, base_size = 8) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5), 
+        legend.title = element_text(face = "bold"),
+        strip.text = element_text(face = "bold"), 
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 6),
+        panel.grid = element_blank())
+
+ggsave(file.path(bayes_out_dir, "genotype_match_heatmap_bayesian_mixpooled.png"), p_bayes_match,
+       width = max(9, length(unique(bayes_match_data$sample)) * 0.5 + 3),
+       height = max(6, length(unique(bayes_match_data$locus)) * 0.15 + 2), dpi = 300, limitsize = FALSE, bg = "white")
+ggsave(file.path(bayes_out_dir, "genotype_match_heatmap_bayesian_mixpooled.pdf"), p_bayes_match,
+       width = max(9, length(unique(bayes_match_data$sample)) * 0.5 + 3),
+       height = max(6, length(unique(bayes_match_data$locus)) * 0.15 + 2), limitsize = FALSE, device = cairo_pdf)
+print(p_bayes_match)
+```
+
+
+
+## HWE Ternary Plots for ASP and Bayes Genotypes 
+HWE Ternary plots showing posterior probabilities for Bayes genotypes and half a Ternary plot showing per locus points with reference comparison.
+
+```{r HWE_Ternary_Plots_for_ASP_and_Bayes_Genotypes, fig.width = 9.5, fig.height = 10, out.width = "80%"}
+# Uses data frames which were prepared in the setup chunk
+hwe_ternary_dir <- file.path(graphics_dir, "HWE_Ternary_plots")
+dir.create(hwe_ternary_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Skips loci with too few called samples (safety check with smaller datasets)
+min_samples_per_locus <- 4
+hwe_methods <- c("reference", "ASP", "ASP_bayesian")
+
+# Deviation from HWE was tested with the exact test (Wigginton et al., 2005), p value is the sum of all outcomes that are as likely or less likely than the observed one. This function takes a number of HT majors and minors and number of HT for one specific locus across all samples and it checks wether these countswould look like randommating (is in HW equilibrium) or not (other factors).
+hwe_exact_p <- function(n_hom_major, n_het, n_hom_minor) {
+  n <- n_hom_major + n_het + n_hom_minor # Calculates number of samples
+  n_minor <- 2 * min(n_hom_major, n_hom_minor) + n_het # Calculates number of minor alleles
+  het_possible <- seq(n_minor %% 2, n_minor, by = 2) # Exact test asks keeps the minor alleles and asks in how many different ways could they split into genotypes
+  log_prob <- vapply(het_possible, function(het) { # Vapply takes each possible HT split and applies it to the function. This gives the probability of getting each split if alleles were mixed randomly (HWE)
+    hom_minor <- (n_minor - het) / 2 # Calculates other HM minor and major based on the number of HT split
+    hom_major <- n - het - hom_minor
+    # Probability calculations turned into log for ease of. use with "+" and "-" ("P(counts|allele counts) = n!/(n_AA!*n_AB!*n_BB!)*2^n_AB*n_A!*n_B!/(2n)!")
+    lfactorial(n) - lfactorial(hom_major) - lfactorial(het) - lfactorial(hom_minor) + het * log(2) + 
+      lfactorial(n_minor) + lfactorial(2 * n - n_minor) - lfactorial(2 * n)
+  }, numeric(1))
+  prob <- exp(log_prob) # Turned back to normal probability
+  observed_prob <- prob[het_possible == n_het] # Takes the probability of that split if the popualtion were in HWE
+  min(1, sum(prob[prob <= observed_prob * (1 + 1e-7)])) # p-value is the sum of all splits probabilites which are even less likely or as likely
+}
+
+# All called genotypes fo the three methods, filtered for loci with enough samples
+hwe_calls <- bind_rows(ref, asp, select(bayes_asp, -status)) %>%
+  filter(!is.na(genotype)) %>%
+  group_by(method, locus) %>%
+  filter(n() >= min_samples_per_locus) %>%
+  ungroup()
+
+# Counts allele copies per method and locus
+hwe_allele_counts <- hwe_calls %>%
+  mutate(allele_1 = substr(genotype, 1, 1), allele_2 = substr(genotype, 2, 2)) %>%
+  pivot_longer(c(allele_1, allele_2), values_to = "allele") %>%
+  count(method, locus, allele)
+
+# Loci with moren than 2 different alleles are erros, they are left out in further analysis
+hwe_too_many_alleles <- hwe_allele_counts %>% count(method, locus, name = "n_alleles") %>% filter(n_alleles > 2)
+if (nrow(hwe_too_many_alleles) > 0) print(hwe_too_many_alleles)
+
+# Major and minor alleles per method and locus
+hwe_alleles <- hwe_allele_counts %>%
+  group_by(method, locus) %>%
+  filter(n() == 2) %>%
+  arrange(desc(n), allele, .by_group = TRUE) %>% 
+  summarise(major = allele[1], minor = allele[2], .groups = "drop")
+
+#Genotype counts per method and locus and applied exact test with HWE statistics
+hwe_counts <- hwe_calls %>%
+  inner_join(hwe_alleles, by = c("method", "locus")) %>% 
+  group_by(method, locus) %>%
+  summarise(n = n(),
+            n_hom_major = sum(genotype == paste0(major, major)),
+            n_het = sum(genotype %in% c(paste0(major, minor), paste0(minor, major))),
+            n_hom_minor = sum(genotype == paste0(minor, minor)),
+            .groups = "drop") %>%
+  group_by(locus) %>%
+  filter(n_distinct(method) == length(hwe_methods)) %>% # Filter for same loci across methods so its comparable
+  ungroup() %>%
+  mutate(major_freq = (2 * n_hom_major + n_het) / (2 * n),
+         he = 2 * major_freq * (1 - major_freq), # HWE expected HT
+         ho = n_het / n, # HT observed
+         f = 1 - ho / he, # Inbreeding coeeficient, if its > 0 to few HT, < 0 too many HT
+         hwe_p = mapply(hwe_exact_p, n_hom_major, n_het, n_hom_minor), # Applies previously defined exact test function
+         hwe_result = case_when(hwe_p >= 0.05 ~ "In HWE",
+                                ho < he ~ "Heterozygote deficit (p < 0.05)",
+                                TRUE ~ "Heterozygote excess (p < 0.05)"),
+         method = factor(method, levels = hwe_methods))
+
+# 1. Plot: Genotype posterior ternary plot for Bayes only
+ternary_called <- filter(bayes_raw, status == "called")
+ternary_confidence <- cut(ternary_called$max_posterior, breaks = c(-Inf, 0.80, 0.95, Inf), right = FALSE, 
+                          labels = c("uncertain (<0.80)", "intermediate (0.80-0.95)", "high (>=0.95)"))
+ternary_colours <- c("uncertain (<0.80)" = error_colour, "intermediate (0.80-0.95)" = "#D9B44A", "high (>=0.95)" = correct_colour)
+
+# Calcualates positions for each locus in the triangle (HT at the top, HM1 at x = 0 y = 0, and HM2 at x = 1, y = 0)
+tern_x <- function(ab, bb) bb + ab / 2 # MAF
+tern_y <- function(ab) ab * sqrt(3) / 2
+
+# Grid lines at 25, 50 and 75 % of each genotype
+ternary_shares <- c(0.25, 0.5, 0.75)
+ternary_grid <- bind_rows(
+  tibble(x = tern_x(ternary_shares, 0), y = tern_y(ternary_shares), xend = tern_x(ternary_shares, 1 - ternary_shares), yend = tern_y(ternary_shares)), # HT share
+  tibble(x = tern_x(0, ternary_shares), y = 0, xend = tern_x(1 - ternary_shares, ternary_shares), yend = tern_y(1 - ternary_shares)), # HM2 share
+  tibble(x = tern_x(0, 1 - ternary_shares), y = 0, xend = tern_x(1 - ternary_shares, 0), yend = tern_y(1 - ternary_shares))) # HM1 share
+
+p_ternary_posterior <- ggplot(mutate(ternary_called, confidence = ternary_confidence),
+                              aes(x = tern_x(posterior_het, posterior_hom2), y = tern_y(posterior_het), colour = confidence)) +
+  geom_segment(data = ternary_grid, aes(x = x, y = y, xend = xend, yend = yend), colour = "grey90", inherit.aes = FALSE) +
+  annotate("polygon", x = c(0, 1, 0.5), y = c(0, 0, sqrt(3) / 2), fill = NA, colour = "grey60") +
+  annotate("text", x = c(0, 1, 0.5), y = c(-0.04, -0.04, sqrt(3) / 2 + 0.04), label = c("hom1", "hom2", "het")) +
+  geom_point(size = 1.6) +
+  scale_colour_manual(values = ternary_colours, breaks = rev(names(ternary_colours)), name = NULL) +
+  coord_equal(xlim = c(-0.08, 1.08), ylim = c(-0.08, 0.95), expand = FALSE) +
+  labs(title = sprintf("Genotype posterior ternary plot - hierarchical base mixture (n=%d)", nrow(ternary_called))) +
+  theme_void(base_family = plot_font, base_size = 11) +
+  theme(plot.title = element_text(hjust = 0.5, size = 10, face = "bold"), legend.position = "bottom",
+        plot.background = element_rect(fill = "white", colour = NA))
+
+#print(p_ternary_posterior)
+#ggsave(file.path(hwe_ternary_dir, "ternary_posterior_bayesian.png"), p_ternary_posterior, width = 7, height = 6.5, dpi = 300, bg = "white")
+#ggsave(file.path(hwe_ternary_dir, "ternary_posterior_bayesian.pdf"), p_ternary_posterior, width = 7, height = 6.5, device = cairo_pdf)
+
+# 2. Plot: HWE ternary plot by locus, each observed locus moves away from its reference genotypes, the difference is presented with arrows. MAF is along the base, AA is awlays the major one, so only half the traingle is needed
+
+tern_n <- median(hwe_counts$n) # typical number of called samples per locus
+tern_n_loci <- n_distinct(hwe_counts$locus)
+
+#small tibble for each curve described by F (inbreeding coeficcient)
+tern_edges <- tibble(edge = c("hwe", "nominal_low", "nominal_high", "bonferroni_low", "bonferroni_high"), # chi-square HWE test accepts |F| below the limit
+                     f = c(0, 1, -1, 1, -1) * sqrt(qchisq(1 - 0.05 / c(1, 1, 1, tern_n_loci, tern_n_loci), df = 1) / tern_n))
+
+tern_curves <- expand_grid(p = seq(0.5, 1, by = 0.001), tern_edges) %>% 
+  mutate(ab = 2 * p * (1 - p) * (1 - f),
+         aa = p - ab / 2,
+         bb = 1 - p - ab / 2) %>%
+  filter(aa >= 0, bb >= 0) %>%
+  mutate(x = tern_x(ab, bb), y = tern_y(ab))
+tern_band <- bind_rows(filter(tern_curves, edge == "nominal_high") %>% arrange(p), # 95 % band polygon
+                       filter(tern_curves, edge == "nominal_low") %>% arrange(desc(p)))
+
+# Left half of the triangle
+tern_half <- tibble(x = c(0, 0.5, 0.5), y = c(0, 0, sqrt(3) / 2))
+
+# Lines for equal HT share
+tern_het_lines <- tibble(het = c(0.25, 0.5, 0.75)) %>%
+  mutate(x = het / 2, y = tern_y(het))
+tern_maf_ticks <- tibble(x = seq(0, 0.5, by = 0.1))
+
+
+tern_curve_labels <- tern_edges %>% 
+  filter(edge %in% c("hwe", "nominal_high", "bonferroni_high")) %>%
+  mutate(x = 0.46, # MAF where the arrows point, just inside the right side
+         y = tern_y(2 * 0.54 * 0.46 * (1 - f)), 
+         label = c("Hardy-Weinberg\nequilibrium",
+                   sprintf("95%% acceptance band\n(chi-square, %d samples)", tern_n),
+                   sprintf("Bonferroni band\n(%d loci)", tern_n_loci)),
+         label_y = y + c(0.08, 0.02, 0.06)) # labels sit a little above their curve
+
+hw_ternary_plot <- function(method_name, display_name) { # short names used in title and legend
+  tern_points <- hwe_counts %>%
+    filter(method %in% c("reference", method_name)) %>%
+    mutate(x = tern_x(n_het / n, n_hom_minor / n), y = tern_y(n_het / n))
+  
+  # one row per locus for reference and called position
+  tern_moves <- tern_points %>% 
+    transmute(locus, source = ifelse(method == "reference", "ref", "called"), x, y) %>%
+    pivot_wider(names_from = source, values_from = c(x, y)) %>%
+    mutate(length = sqrt((x_called - x_ref)^2 + (y_called - y_ref)^2),
+           gap = 0.01 / length) %>% # small gap for arrows
+    filter(length > 0.025) %>% 
+    mutate(x_start = x_ref + (x_called - x_ref) * gap, y_start = y_ref + (y_called - y_ref) * gap,
+           x_end = x_called - (x_called - x_ref) * gap, y_end = y_called - (y_called - y_ref) * gap)
+  
+  tern_failed <- sum(tern_points$method == method_name & tern_points$hwe_result != "In HWE")
+  
+  tern_labels <- c("In HWE" = sprintf("%s genotypes in HWE", display_name),
+                   "Heterozygote deficit (p < 0.05)" = sprintf("%s genotypes, HT deficit (p < 0.05)", display_name),
+                   "Heterozygote excess (p < 0.05)" = sprintf("%s genotypes, HT excess (p < 0.05)", display_name))
+  
+  tern_plot <- ggplot() +
+    geom_polygon(data = tern_band, aes(x = x, y = y), fill = "grey90") +
+    geom_path(data = filter(tern_curves, startsWith(edge, "bonferroni")), aes(x = x, y = y, group = edge), linetype = "dotted", colour = "grey50") +
+    geom_segment(data = tern_het_lines, aes(x = x, xend = 0.5, y = y, yend = y), colour = "grey85", linewidth = 0.3) +
+    geom_text(data = tern_het_lines, aes(x = 0.51, y = y, label = sprintf("%.0f%% het", het * 100)), hjust = 0, size = 2.8, colour = "grey55") +
+    geom_polygon(data = tern_half, aes(x = x, y = y), fill = NA, colour = "grey40", linewidth = 0.5) +
+    geom_path(data = filter(tern_curves, edge == "hwe"), aes(x = x, y = y), linetype = "dashed", colour = "grey25") +
+    geom_segment(data = tern_curve_labels, aes(x = 0.575, y = label_y, xend = x, yend = y), colour = "grey40", linewidth = 0.3,
+                 arrow = arrow(length = unit(1.3, "mm"), type = "closed")) + 
+    geom_text(data = tern_curve_labels, aes(x = 0.58, y = label_y, label = label), hjust = 0, size = 2.9, colour = "grey25", lineheight = 0.95) +
+    geom_segment(data = tern_moves, aes(x = x_start, y = y_start, xend = x_end, yend = y_end, linetype = "shift"), colour = "grey55", linewidth = 0.4,
+                 arrow = arrow(length = unit(1.6, "mm"), type = "closed"), key_glyph = "path") +
+    geom_point(data = filter(tern_points, method == "reference"), aes(x = x, y = y, shape = "reference"), fill = "white", colour = "grey35", size = 2.2) +
+    geom_point(data = filter(tern_points, method == method_name), aes(x = x, y = y, colour = hwe_result), size = 2.4, alpha = 0.85) +
+    annotate("text", x = 0, y = 0.82, hjust = 0, vjust = 1, size = 4.6, fontface = "bold", lineheight = 1.1, colour = "grey15",
+             label = sprintf("Genotype frequencies per locus\nvs Hardy-Weinberg\nreference -> %s", display_name)) + 
+    annotate("text", x = 0, y = 0.70, hjust = 0, vjust = 1, size = 3.1, fontface = "bold", lineheight = 1.2, colour = "grey15",
+             label = sprintf("%d of %d loci fail the exact HWE test\n(%.1f expected by chance).", tern_failed, tern_n_loci, 0.05 * tern_n_loci)) +
+    annotate("text", x = 0, y = 0.63, hjust = 0, vjust = 1, size = 3.1, lineheight = 1.2, colour = "grey15",
+             label = "Each point is one locus, placed by\nthe share of its samples called\nAA (major homozygote),\nAB (heterozygote) and\nBB (minor homozygote).\n\nBelow the band =\ntoo few heterozygotes.") +
+    geom_segment(data = tern_maf_ticks, aes(x = x, xend = x, y = 0, yend = -0.012), colour = "grey40") + # MAF axis
+    geom_text(data = tern_maf_ticks, aes(x = x, y = -0.035, label = x), size = 3, colour = "grey30") +
+    annotate("text", x = 0.25, y = -0.08, label = "Minor allele frequency", size = 3.5) +
+    annotate("text", x = -0.015, y = 0, label = "AA", hjust = 1, size = 4, fontface = "bold") +
+    annotate("text", x = 0.5, y = sqrt(3) / 2 + 0.03, label = "AB", size = 4, fontface = "bold") +
+    scale_colour_manual(values = c("In HWE" = "grey30", "Heterozygote deficit (p < 0.05)" = hm_dark, "Heterozygote excess (p < 0.05)" = ht_dark),
+                        labels = tern_labels, name = NULL) +
+    scale_shape_manual(values = c(reference = 21), labels = c(reference = "Reference"), name = NULL) +
+    scale_linetype_manual(values = c(shift = "solid"), labels = c(shift = "Shift from reference"), name = NULL) +
+    guides(shape = guide_legend(order = 1), linetype = guide_legend(order = 2), colour = guide_legend(order = 3, nrow = 1)) +
+    coord_equal(xlim = c(-0.1, 0.75), ylim = c(-0.09, 0.9), expand = FALSE, clip = "off") +
+    theme_void(base_family = plot_font, base_size = 11) +
+    theme(legend.position = "bottom", legend.box = "horizontal", legend.spacing.x = unit(12, "pt"),
+          plot.margin = margin(10, 20, 10, 20))
+  
+  ggsave(file.path(hwe_ternary_dir, sprintf("hw_ternary_by_locus_%s.png", method_name)), tern_plot, width = 9.5, height = 10, dpi = 300, bg = "white")
+  ggsave(file.path(hwe_ternary_dir, sprintf("hw_ternary_by_locus_%s.pdf", method_name)), tern_plot, width = 9.5, height = 10, device = cairo_pdf)
+  tern_plot
+}
+
+p_tern_asp <- hw_ternary_plot("ASP", "ASP")
+p_tern_bayesian <- hw_ternary_plot("ASP_bayesian", "Bayes")
+print(p_tern_asp)
+print(p_tern_bayesian)
+```
+
+
+
+## Depth and HM/HT heatmap 
+This chunk holds a function for two types of heatmaps, one for depth and one for zygosity. It calls it for both Bayes and ASP genotyper and saves plots  automatically into seperate folders. 
+Heatmaps shows all the called genotypes by HM and HT pairs, call with no reference (black outline), wrongly called genotypes (black crosses) and no calls caused by low depth. Note: low depth is set in the master pipeline, for plots created at the moment its set way too low at minimum depth of 3. This should be changed for final results, which would in turn also bring the accuracy of the genotyper closer to 100 %. 
+
+```{r Depth_and_HMHT_Heatmap, fig.width = 11.69, fig.height = 8.27, out.width = "100%"}
+
+make_genotype_plot <- function(asp_df, method_label, ref, out_path, plot_title, type = c("zygosity", "depth"), panel_title = method_label) {
+  type <- match.arg(type)
+# Read totals order from top to bottom (highest to lowest depth locus) and left to right (highest to lowest depth sample), data preparation
+  locus_totals <- asp_df %>%
+    group_by(locus) %>%
+    summarise(total_reads = sum(depth, na.rm = TRUE)) %>%
+    arrange(desc(total_reads))
+
+  sample_totals <- asp_df %>%
+    group_by(sample) %>%
+    summarise(total_reads = sum(depth, na.rm = TRUE)) %>%
+    arrange(desc(total_reads))
+
+  sample_order <- sample_totals$sample
+  locus_levels <- rev(locus_totals$locus)
+
+# one row per sample locus pair, calls without a reference keep the value but they are marked with a black outline as no reference calls, pairs which did not produce a call are grey
+  method_tiles <- asp_df %>%
+    left_join(select(ref, sample, locus, reference = genotype), by = c("sample", "locus"), relationship = "one-to-one") %>%
+    mutate(zygosity = case_when(is.na(reference) & is.na(genotype) ~ "No reference",
+                                is.na(genotype) ~ "No call",
+                                substr(genotype, 1, 1) == substr(genotype, 2, 2) ~ "Homozygous",
+                                TRUE ~ "Heterozygous"),
+           zygosity = factor(zygosity, levels = c("Homozygous", "Heterozygous", "No call", "No reference")),
+           no_reference_call = is.na(reference) & !is.na(genotype),
+           locus = factor(locus, levels = locus_levels),
+           sample = factor(sample, levels = sample_order))
+  
+  no_reference_cells <- filter(method_tiles, no_reference_call) # calls with no reference
+  scored_tiles <- filter(method_tiles, !is.na(reference), !is.na(genotype)) # calls with reference
+
+# Plot subtitle preparation, show number of called pairs, number of misscalled pairs and accuracy
+  miscall_subtitle <- scored_tiles %>%
+    mutate(reference_zygosity = ifelse(substr(reference, 1, 1) == substr(reference, 2, 2), "homozygous", "heterozygous")) %>%
+    count(reference_zygosity, miscalled = genotype != reference) %>%
+    filter(miscalled) %>%
+    mutate(label = sprintf("%d miscalled %s genotype%s", n, reference_zygosity, ifelse(n == 1, "", "s"))) %>%
+    pull(label) %>%
+    paste(collapse = ", ")
+  
+  if (miscall_subtitle == "") miscall_subtitle <- "no miscalled genotypes"
+  n_called_with_ref <- nrow(scored_tiles)
+  n_correct <- sum(scored_tiles$genotype == scored_tiles$reference)
+  accuracy_subtitle <- if (n_called_with_ref == 0) {sprintf("no %s/reference overlap to score", method_label)} else {
+    sprintf("%d/%d calls correct (%.1f%% accuracy)", n_correct, n_called_with_ref, 100 * n_correct / n_called_with_ref)
+  }
+
+# Call rate over all sample locus pairs, including those without a reference
+  n_pairs_total <- length(sample_order) * length(locus_levels)
+  n_called_total <- sum(!is.na(method_tiles$genotype))
+  call_rate_subtitle <- sprintf("Call rate: %d/%d (%.1f%%)", n_called_total, n_pairs_total, 100 * n_called_total / n_pairs_total)
+
+# Saves pairs with wrong calls
+  mismatch_cells <- filter(scored_tiles, genotype != reference)
+
+  heatmap_theme <- theme_minimal(base_family = plot_font, base_size = 8) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1), axis.text.y = element_text(size = 7.5), 
+          panel.grid = element_blank(), plot.margin = margin(t = -10, r = 2, b = 4, l = 4),
+          legend.title = element_text(face = "bold"), 
+          legend.key.size = unit(14, "pt"), 
+          legend.key.spacing.y = unit(4, "pt"), 
+          legend.spacing.y = unit(4, "pt"),
+          legend.margin = margin(0, 0, 0, 0))
+
+# black outlines for calls with no reference are drawn a little bit inside the tile so it doesnt touch other cells
+no_reference_outline <- geom_tile(data = no_reference_cells, aes(x = sample, y = locus), fill = NA, colour = "black",
+                                  linewidth = 0.5, width = 0.9, height = 0.9, inherit.aes = FALSE)
+
+# Because the extra markers are not mapped in aes() they need an extra step for legend. Custom legend entries for the two extra markers, creates marker labels and marker key which creates two entries for legend (shape is mapped to marker with alpha = 0 which makes it transparent)
+  marker_labels <- c(sprintf("Called, no reference (%d)", nrow(no_reference_cells)),
+                     sprintf("Incorrect call (%d)", nrow(mismatch_cells)))
+  
+# Two placeholder rows (one per legend entry) on an existing tile used to create a legend
+  marker_key <- data.frame(sample = factor(sample_order[1], levels = sample_order),
+                           locus = factor(locus_levels[length(locus_levels)], levels = locus_levels),
+                           marker = factor(marker_labels, levels = marker_labels))
+  
+# This makes the two figures for two legend entries, one box split diagonally into both colours and one with black outline or X on top
+  make_draw_key_marks <- function(fill_low, fill_high) {
+    function(data, params, size) { # polygonGrob hold instructions for building a graphical object
+      split_tile <- list(polygonGrob(x = c(0, 1, 0), y = c(0, 0, 1), gp = gpar(fill = fill_low, col = NA)), # two triangles for legend
+                         polygonGrob(x = c(1, 1, 0), y = c(0, 1, 1), gp = gpar(fill = fill_high, col = NA)))
+      mark <- if (data$shape == 0) { # rectGrob makes a rectangle
+        rectGrob(width = 1, height = 1, gp = gpar(fill = NA, col = "black", lwd = 1.3)) # gpar set the look of graphical objects - black outline
+      } else { # pointsGrob makes points symbols
+        pointsGrob(0.5, 0.5, pch = 4, gp = gpar(col = "black", lwd = 2, cex = 0.9)) # X marker on the heatmap
+      }
+      do.call(grobTree, c(split_tile, list(mark))) # This groups several "grobs" (graphical objects) together, one on top of the other
+    }
+  }
+  
+# geom_point() plots those marker_key entries with shape mapped to marker
+  make_marker_legend <- function(fill_low, fill_high) list(
+    geom_point(data = marker_key, aes(x = sample, y = locus, shape = marker), alpha = 0, inherit.aes = FALSE, # transparent points
+               key_glyph = make_draw_key_marks(fill_low, fill_high)),
+    scale_shape_manual(values = setNames(c(0, 4), marker_labels), name = NULL), #
+    guides(shape = guide_legend(override.aes = list(alpha = 1), order = 2, byrow = TRUE,
+                                theme = theme(legend.title = element_blank()))))
+
+# Based on input type it creates a different plot, here the heatmaps actually differ
+  if (type == "zygosity") {
+    zygosity_fills <- c("Homozygous" = hm_dark, "Heterozygous" = ht_dark, "No call" = no_call_colour, "No reference" = no_reference_colour)
+
+    # Legend labels with numbers of tiles showing results clearly
+    zygosity_counts <- table(method_tiles$zygosity) # Counts all four factors of zygosity
+    zygosity_labels <- setNames(sprintf("%s (%d)", names(zygosity_counts), as.integer(zygosity_counts)), names(zygosity_counts))
+
+    # Heatmap for zygosity
+    panels <- ggplot(method_tiles, aes(x = sample, y = locus, fill = zygosity)) +
+      geom_tile(colour = "white", linewidth = 0.2) +
+      no_reference_outline +
+      geom_point(data = mismatch_cells, aes(x = sample, y = locus, colour = zygosity),
+                 shape = 4, size = 2.5, stroke = 1.3, inherit.aes = FALSE, show.legend = FALSE) +
+      scale_fill_manual(values = zygosity_fills, labels = zygosity_labels, name = "LEGEND", drop = FALSE) +
+      scale_colour_manual(values = c("Homozygous" = "white", "Heterozygous" = "white"), guide = "none") +
+      guides(fill = guide_legend(override.aes = list(colour = "grey50", linewidth = 0.3), order = 1, byrow = TRUE)) + # grey border for "No reference"
+      make_marker_legend(zygosity_fills[["Homozygous"]], zygosity_fills[["Heterozygous"]]) +
+      labs(title = panel_title, x = "Sample", y = "Locus") +
+      heatmap_theme +
+      theme(plot.title = element_text(hjust = 0.5, face = "bold"), plot.margin = margin(4, 4, 4, 4))
+
+    combined_layout <- plot_layout(guides = "collect") # Legend on the right side, using patchwork for consistency with the depth heatmap
+  } else {
+
+# 2.Plot: Depth heatmap with sample depth on top and locus depth on the right side (ordered)
+    # Only two axis marks so one in the middle and one for max value
+    orientation_breaks <- function(totals) signif(c(max(totals) / 2, max(totals)), 2)
+    reads_axis_labels <- label_number(scale = 1e-3, suffix = "k", accuracy = 1)
+
+    # First panel for sample depth
+    p_sample_reads <- ggplot(sample_totals %>% 
+                            mutate(sample = factor(sample, levels = sample_order)), aes(x = sample, y = total_reads)) +
+      geom_col(fill = "grey50", width = 0.8) +
+      scale_y_continuous(limits = c(0, NA), breaks = orientation_breaks(sample_totals$total_reads), labels = reads_axis_labels,
+                         expand = expansion(mult = c(0, 0.08))) +
+      theme_minimal(base_family = plot_font, base_size = 8) +
+      theme(axis.text.x = element_blank(), axis.title.x = element_blank(),
+            panel.grid.minor = element_blank(), panel.grid.major.x = element_blank(),
+            plot.title = element_text(hjust = 0.5, face = "bold")) +
+      labs(y = "Reads", title = panel_title)
+
+    # Second panel for locus depth
+    p_locus_reads <- ggplot(locus_totals %>% 
+                              mutate(locus = factor(locus, levels = locus_levels)), aes(x = total_reads, y = locus)) +
+      geom_col(fill = "grey50", width = 0.8) +
+      scale_x_continuous(limits = c(0, NA), breaks = orientation_breaks(locus_totals$total_reads), labels = reads_axis_labels,
+                         expand = expansion(mult = c(0, 0.08))) +
+      theme_minimal(base_family = plot_font, base_size = 8) +
+      theme(axis.text.y = element_blank(), axis.title.y = element_blank(),
+            panel.grid.minor = element_blank(), panel.grid.major.y = element_blank()) +
+      labs(x = "Reads")
+
+    # Main panel showing depth heatmap
+    p_main <- ggplot(method_tiles, aes(x = sample, y = locus)) +
+      geom_tile(data = filter(method_tiles, !is.na(genotype)), aes(fill = depth), colour = "white", linewidth = 0.2) +
+      geom_tile(data = filter(method_tiles, zygosity == "No call"), fill = no_call_colour, colour = "white", linewidth = 0.2) +
+      geom_tile(data = filter(method_tiles, zygosity == "No reference"), fill = no_reference_colour, colour = "white", linewidth = 0.2) +
+      no_reference_outline +
+      geom_point(data = mismatch_cells, aes(x = sample, y = locus), shape = 4, size = 2, stroke = 1.3, colour = "black", inherit.aes = FALSE) +
+      make_marker_legend("#A4B591", "#A4B591") + 
+      scale_fill_gradient(low = "#F1E4DB", high = "#2C5724", transform = "log1p", name = "Depth (reads)", # log because it goes from 3 to 3000
+                          breaks = c(3, 10, 30, 100, 300, 1000, 3000), labels = label_comma(),
+                          guide = guide_colourbar(order = 1)) +
+      labs(x = "Sample", y = "Locus") +
+      heatmap_theme
+
+    # Plot is split into 11 column, 9 for heatmap, 1 for locus reads  and one for legends and 10 rows 1 for sample reads and 9 for heatmap
+    layout <- c(area(t = 1, l = 1, b = 1, r = 9),
+                area(t = 2, l = 1, b = 10, r = 9),
+                area(t = 2, l = 10, b = 10, r = 10),
+                area(t = 2, l = 11, b = 10, r = 12)) 
+    panels <- p_sample_reads + p_main + p_locus_reads + guide_area()
+    combined_layout <- plot_layout(design = layout, guides = "collect")}
+
+ # Combines the panels and layout and saves the plots
+  p_combined <- panels +
+    combined_layout +
+    plot_annotation(title = plot_title, # Annotation and legend theme for the whole plot not separate panels
+                            subtitle = sprintf("%s | %s vs reference: %s | %s", call_rate_subtitle, method_label, miscall_subtitle, accuracy_subtitle),
+                            theme = theme(plot.title = element_text(hjust = 0.5, face = "bold"), 
+                                             plot.subtitle = element_text(hjust = 0.5),
+                                             legend.spacing.y = unit(4, "pt"),
+                                             legend.justification = c(0, 0.5), 
+                                             legend.box.margin = margin(0, 0, 0, -10)))
+
+  # saving in landscape both plots
+  ggsave(out_path, p_combined, width = 11.69, height = 8.27, dpi = 300, bg = "white") 
+  ggsave(sub("\\.png$", ".pdf", out_path), p_combined, width = 11.69, height = 8.27, device = cairo_pdf)
+
+  p_combined 
+}
+
+### Function calling
+
+identified_genotypes <- transmute(asp_results, sample = barcode, locus, genotype, depth) # ASP calls with their read depth
+bayes_genotypes <- transmute(bayes_raw, sample = barcode, locus, genotype, depth) # Bayesian calls with their read depth
+mm2_genotypes <- transmute(mm2_raw, sample = barcode, locus, genotype, depth) # Minimap 2 calls with their read depth
+
+identified_zygosity_plot <- make_genotype_plot(identified_genotypes, "ASP", ref,
+                                               out_path = file.path(out_dir, "genotype_zygosity_heatmap.png"),
+                                               plot_title = "ASP final called genotypes by zygosity",
+                                               type = "zygosity", panel_title = "Final ASP Genotypes")
+
+identified_depth_plot <- make_genotype_plot(identified_genotypes, "ASP", ref,
+                                            out_path = file.path(out_dir, "genotype_depth_heatmap.png"),
+                                            plot_title = "ASP final called genotypes by read depth",
+                                            type = "depth", panel_title = "Final ASP Genotypes")
+
+bayes_zygosity_plot <- make_genotype_plot(bayes_genotypes, "Bayesian ASP", ref,
+                                          out_path = file.path(bayes_out_dir, "genotype_zygosity_heatmap_bayesian.png"),
+                                          plot_title = "Bayesian ASP final called genotypes by zygosity",
+                                          type = "zygosity", panel_title = "Final Bayesian ASP Genotypes")
+
+bayes_depth_plot <- make_genotype_plot(bayes_genotypes, "Bayesian ASP", ref,
+                                       out_path = file.path(bayes_out_dir, "genotype_depth_heatmap_bayesian.png"),
+                                       plot_title = "Bayesian ASP final called genotypes by read depth",
+                                       type = "depth", panel_title = "Final Bayesian ASP Genotypes")
+
+mm2_zygosity_plot <- make_genotype_plot(mm2_genotypes, "Minimap2", ref,
+                                        out_path = file.path(mm2_out_dir, "genotype_zygosity_heatmap_minimap2.png"),
+                                        plot_title = "Minimap2 final called genotypes by zygosity",
+                                        type = "zygosity", panel_title = "Final Minimap2 Genotypes")
+
+mm2_depth_plot <- make_genotype_plot(mm2_genotypes, "Minimap2", ref,
+                                     out_path = file.path(mm2_out_dir, "genotype_depth_heatmap_minimap2.png"),
+                                     plot_title = "Minimap2 final called genotypes by read depth",
+                                     type = "depth", panel_title = "Final Minimap2 Genotypes")
+
+print(identified_zygosity_plot)
+print(bayes_zygosity_plot)
+print(identified_depth_plot)
+print(bayes_depth_plot)
+print(mm2_zygosity_plot)
+print(mm2_depth_plot)
+```
+
+
+
+## Downsampling and calibration plots
+This chunk makes three plots for downsampling and calibration visualsation, comparison of error rates between HM and HT against read depth, paired difference between stan and naive caller showing how many miscalls are made, and the GQ threshold simulation for using it as a filter.
+
+```{r Downsampling_Calibration_Plots, fig.width = 8.27, fig.height = 5.85}
+### Chunk for plotting the calibration and other results from 05b
+# Reading saves results so plotting chunks can be run without stan
+if (!exists("downsampling_plot_inputs")) {
+  stopifnot("no saved run with these settings, run the downsampling first" = file.exists(file.path(downsampling_output_folder, "downsampling_plot_inputs.rds")))
+  downsampling_plot_inputs <- readRDS(file.path(downsampling_output_folder, "downsampling_plot_inputs.rds"))
+}
+invisible(list2env(downsampling_plot_inputs[names(downsampling_plot_inputs) != "downsampling_output_folder"], envir = environment())) 
+
+# Plot settings
+depths_in_tradeoff_graph <- c(4, 6, 8, 10, 15, 20) 
+depth_colours <- setNames(colorRampPalette(c(error_colour, "#AB5D26", "#D9A877", "#E1C473", correct_colour, "#2C5724"))(length(depths_in_tradeoff_graph)),
+                          paste(depths_in_tradeoff_graph, "reads")) 
+lowest_plotted_error <- 1e-5 # zero errors are drawn at 0.001 % on the log scales
+caller_colours <- c("Naive" = "#834D24", "Hierarchical Stan" = "#2C5724")
+downsampling_theme <- theme_minimal(base_family = plot_font, base_size = 12) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, size = 10),
+        strip.text = element_text(face = "bold", size = 12),
+        legend.position = "top",
+        panel.grid.minor = element_blank())
+
+### 1. Plot, error rate against read depth
+group_pair_counts <- distinct(error_by_depth_table, group, n_pairs) # one row per group, n_pairs is the same at every depth
+group_panel_labels <- setNames(sprintf("%s (n = %d)", group_pair_counts$group, group_pair_counts$n_pairs), group_pair_counts$group)
+
+error_plot_data <- bind_rows(
+  error_by_depth_table %>% transmute(group, depth, caller = "Naive", error_rate = Naive, band_low = naive_low, band_high = naive_high),
+  error_by_depth_table %>% transmute(group, depth, caller = "Hierarchical Stan", error_rate = `Hierarchical Stan`, band_low = stan_low, band_high = stan_high)
+) %>%
+  mutate(caller = factor(caller, levels = names(caller_colours)),
+         across(c(error_rate, band_low, band_high), ~ pmax(.x, lowest_plotted_error))) # log scale cannot show 0
+
+error_by_depth_plot <- ggplot(error_plot_data, aes(x = depth, y = error_rate, colour = caller, fill = caller)) +
+  geom_ribbon(aes(ymin = band_low, ymax = band_high), alpha = 0.15, colour = NA) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 1.8) +
+  facet_wrap(~ group, labeller = as_labeller(group_panel_labels)) + 
+  scale_x_log10(breaks = c(3, 5, 8, 12, 20, 30, 50, 75), expand = c(0, 0)) + 
+  coord_cartesian(clip = "off") +
+  scale_y_log10(labels = label_percent(accuracy = 0.001, drop0trailing = TRUE), breaks = c(1e-5, 1e-4, 1e-3, 1e-2, 1e-1),
+                expand = expansion(mult = c(0, 0.03))) + 
+  scale_colour_manual(values = caller_colours, labels = c("Naive" = "Naive", "Hierarchical Stan" = sprintf("Hierarchical Stan (%s prior)", prior_description))) +
+  scale_fill_manual(values = caller_colours, labels = c("Naive" = "Naive", "Hierarchical Stan" = sprintf("Hierarchical Stan (%s prior)", prior_description))) +
+  labs(title = "Genotype error rate by depth with 95 % bootstrap band over pairs",
+       x = "Reads kept (log)", y = "Wrong calls (log)", colour = NULL, fill = NULL) +
+  downsampling_theme +
+  theme(panel.spacing.x = unit(2, "lines")) 
+print(error_by_depth_plot)
+
+### 2. Plot, paired difference naive - Stan
+# Paired difference between naive and stan caller on the same draws (if its above zero Stan makes fewer errors)
+caller_difference_plot <- ggplot(error_by_depth_table, aes(x = depth, y = difference, colour = group, fill = group)) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_blank(aes(y = -difference_low)) + # invisible mirrored band, so the y axis is symmetric around 0
+  geom_blank(aes(y = -difference_high)) +
+  geom_ribbon(aes(ymin = difference_low, ymax = difference_high), alpha = 0.15, colour = NA) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 1.8) +
+  scale_x_log10(breaks = c(3, 5, 8, 12, 20, 30, 50, 75)) +
+  scale_y_continuous(labels = label_number(scale = 100, accuracy = 0.1, style_positive = "plus")) + 
+  scale_colour_manual(values = group_colours) +
+  scale_fill_manual(values = group_colours) +
+  labs(title = "Naive minus hierarchical Stan error rate",
+       subtitle = sprintf("Same draws for both callers | Stan genotype prior: %s | Band: 95%% bootstrap over pairs (%d rounds)",
+                          prior_description, bootstrap_rounds),
+       x = "Reads kept (log scale)", y = "Wrong calls avoided by Stan per 100 calls", colour = NULL, fill = NULL) +
+  downsampling_theme +
+  theme(legend.position = "right")
+print(caller_difference_plot)
+
+### 3. Plot, GQ cut-off trade-off
+# GQ as a filter: per depth, share of all calls removed (cost) against share of wrong calls removed (gain), one point per threshold
+gq_tradeoff_plot_data <- gq_tradeoff_table %>%
+  filter(depth %in% depths_in_tradeoff_graph, !is.na(share_errors_removed)) %>% 
+  mutate(share_removed = 1 - share_kept,
+         overall_error = error_among_kept[gq_threshold == min(gq_threshold)], 
+         share_correct_removed = (share_removed - overall_error * share_errors_removed) / (1 - overall_error), 
+         youden_index = share_errors_removed - share_correct_removed, 
+         depth_label = factor(paste(depth, "reads"), levels = names(depth_colours)), .by = depth) %>%
+  arrange(depth, gq_threshold) 
+
+# Best threshold per depth
+best_threshold_points <- gq_tradeoff_plot_data %>% slice_max(youden_index, n = 1, with_ties = FALSE, by = depth)
+kable(best_threshold_points %>%
+        transmute(depth, gq_threshold, 100 * share_kept, 100 * share_errors_removed, 100 * share_correct_removed, 100 * error_among_kept),
+      digits = c(0, 0, 1, 1, 1, 3),
+      col.names = c("Reads", "Best GQ threshold", "Calls kept (%)", "Wrong calls removed (%)", "Correct calls removed (%)", "Error among kept (%)"),
+      caption = "Best GQ threshold per depth (largest Youden index)")
+# Legend entries with each depth's best threshold
+depth_legend_labels <- setNames(sprintf("%s (GQ %d)", best_threshold_points$depth_label, best_threshold_points$gq_threshold),
+                                best_threshold_points$depth_label)
+
+gq_tradeoff_plot <- ggplot(gq_tradeoff_plot_data, aes(x = share_correct_removed, y = share_errors_removed, colour = depth_label)) +
+  geom_path(linewidth = 0.8) +
+  geom_point(data = best_threshold_points, size = 2.6) + # best threshold per depth
+  scale_x_continuous(labels = percent, breaks = seq(0, 0.3, 0.05)) +
+  scale_y_continuous(labels = percent, breaks = seq(0, 1, 0.25)) +
+  scale_colour_manual(values = depth_colours, labels = depth_legend_labels) +
+  coord_cartesian(xlim = c(0, 0.3), ylim = c(0, 1)) + 
+  labs(title = "GQ filter simulation: wrong calls removed against correct calls removed",
+       subtitle = sprintf("Hierarchical Stan with %s prior | GQ thresholds %s to %s",
+                          prior_description, min(gq_tradeoff_plot_data$gq_threshold), max(gq_tradeoff_plot_data$gq_threshold)),
+       x = "Correct calls removed", y = "Wrong calls removed", colour = NULL) +
+  downsampling_theme +
+  theme(legend.position = "right")
+print(gq_tradeoff_plot)
+
+### Saving plots
+ggsave(file.path(downsampling_output_folder, "error_vs_depth.png"), error_by_depth_plot, width = 8.27, height = 5.85, dpi = 300, bg = "white") 
+ggsave(file.path(downsampling_output_folder, "error_vs_depth.pdf"), error_by_depth_plot, width = 8.27, height = 5.85, device = cairo_pdf)
+ggsave(file.path(downsampling_output_folder, "caller_difference.png"), caller_difference_plot, width = 8.27, height = 5.85, dpi = 300, bg = "white")
+ggsave(file.path(downsampling_output_folder, "caller_difference.pdf"), caller_difference_plot, width = 8.27, height = 5.85, device = cairo_pdf)
+ggsave(file.path(downsampling_output_folder, "gq_cutoff_tradeoff.png"), gq_tradeoff_plot, width = 8.27, height = 5.85, dpi = 300, bg = "white")
+ggsave(file.path(downsampling_output_folder, "gq_cutoff_tradeoff.pdf"), gq_tradeoff_plot, width = 8.27, height = 5.85, device = cairo_pdf)
+```
+
+
+
+## Genotype Calibration Plot
+This chunk contains data prep and genotype calibration plot.
+
+```{r Genotype_Calibration_Plot, fig.width = 8.27, fig.height = 8.27}
+### Calibration plot: HM and HT with bands
+calibration_colours <- c("All calls" = "grey25", "Homozygous calls" = hm_dark, "Heterozygous calls" = ht_dark) 
+
+calibration_verdicts <- calibration_statistics_table %>%
+  mutate(legend_label = sprintf("%s: ECE %.1f %%, Z = %.0f",
+                                c("All calls" = "All", "Homozygous calls" = "HM", "Heterozygous calls" = "HT")[as.character(group)],
+                                100 * ece, spiegelhalter_z_cluster))
+calibration_legend_labels <- setNames(calibration_verdicts$legend_label, as.character(calibration_verdicts$group))
+
+minimum_wrong_calls_per_bin <- 10 # an error rate needs enough wrong calls to be measured, bins with fewer are left out
+calibration_bins <- calibration_table %>% filter(group != "All calls") %>% mutate(group = droplevels(group))
+calibration_plot_data <- calibration_table %>%
+  filter(n_wrong >= minimum_wrong_calls_per_bin) %>%
+  mutate(group = factor(group, levels = calibration_groups)) # All calls, HM, HT in this order
+
+hidden_bins <- calibration_bins %>% filter(n_wrong < minimum_wrong_calls_per_bin)
+hidden_note <- sprintf("Bins with fewer than %d wrong calls not shown (%d wrong out of %s calls there)",
+                       minimum_wrong_calls_per_bin, sum(hidden_bins$n_wrong), comma(sum(hidden_bins$n)))
+phred_breaks <- seq(0, 40, 10)
+
+calibration_plot <- ggplot(calibration_plot_data, aes(x = claimed_Q, y = empirical_Q, colour = group)) +
+  annotate("polygon", x = c(0, 40, 0), y = c(0, 40, 40), fill = correct_colour, alpha = 0.08) + # background colour
+  annotate("polygon", x = c(0, 40, 40), y = c(0, 0, 40), fill = error_colour, alpha = 0.08) + 
+  annotate("text", x = 1.5, y = 39, label = "Fewer errors than claimed", hjust = 0, vjust = 1, size = 3.6, colour = "grey30", family = plot_font) +
+  annotate("text", x = 39, y = 1, label = "More errors than claimed", hjust = 1, vjust = 0, size = 3.6, colour = "grey30", family = plot_font) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_ribbon(aes(ymin = bar_Q_low, ymax = bar_Q_high, fill = group), alpha = 0.18, colour = NA) +
+  geom_path(linewidth = 0.8) +
+  geom_point(aes(size = n), alpha = 0.9) +
+  scale_colour_manual(values = calibration_colours, labels = calibration_legend_labels, name = NULL) +
+  scale_fill_manual(values = calibration_colours, guide = "none") + 
+  scale_size_continuous(transform = "log10", range = c(1.5, 6), breaks = c(10000, 100000, 300000),
+                        labels = label_number(scale = 1e-3, suffix = "k"), name = "Calls in bin") + 
+  scale_x_continuous(breaks = phred_breaks) +
+  scale_y_continuous(breaks = phred_breaks) +
+  coord_equal(xlim = c(0, 40), ylim = c(0, 40), expand = FALSE) +
+  guides(colour = guide_legend(order = 1, nrow = 1, override.aes = list(size = 4)), size = guide_legend(order = 2, nrow = 1)) +
+  labs(title = "Genotype quality calibration: claimed against observed",
+       subtitle = sprintf("Hierarchical Stan with %s prior | Bands: 95 %% bootstrap over pairs\n%s",
+                          prior_description, hidden_note),
+       x = "Claimed GQ", y = "Observed GQ") +
+  downsampling_theme +
+  theme(legend.box = "horizontal",
+        legend.title = element_text(size = rel(0.8)), 
+        legend.text = element_text(margin = margin(l = 3)), 
+        legend.key.spacing.x = unit(6, "pt"), 
+        legend.spacing.x = unit(8, "pt"), 
+        legend.margin = margin(0, 0, 0, 0)) 
+print(calibration_plot)
+
+ggsave(file.path(downsampling_output_folder, "genotype_calibration.png"), calibration_plot, width = 8.27, height = 8.27, dpi = 300, bg = "white")
+ggsave(file.path(downsampling_output_folder, "genotype_calibration.pdf"), calibration_plot, width = 8.27, height = 8.27, device = cairo_pdf)
+```
+
+
+
+## Genotype Prior Comparison Plots
+This chunk contains comparison plots between different priors used on the same settings, it contains data prep and plot for error rate and genotype calibration comparison.
+
+```{r Prior_Comparison_Plots, fig.width = 11.69, fig.height = 8.27}
+### Prior comparison plot with same settings but three different priors
+# Importing the files
+comparison_parent_folder <- file.path("Results", dataset_name, "Graphics", "STAN_Hierarchical")
+comparison_folders <- file.path(comparison_parent_folder, c(
+  "unpad_a3_e0.08_flat",
+  "unpad_a3_e0.08_het0.15",
+  "unpad_a3_e0.08_hwe_Wall_fl0.001",
+  "unpad_a3_e0.08_anc_Wall_fl0.001_b1",
+  "unpad_a3_e0.08_anc_WEastEurope_fl0.001_b1"), "Downsampling_calibration_sflag_r75_d75_n300") # run folders, then the downsampling folder inside each
+comparison_folders <- comparison_folders[file.exists(file.path(comparison_folders, "downsampling_plot_inputs.rds"))] # runs that don't exist (yet) are skipped
+prior_palette <- c("#E0A526", "#2F6690", "#8E5C8E", "#C2502E", "#5E8C3A")
+
+# Saved results of each run, all runs must share the same truth set
+comparison_runs <- lapply(comparison_folders, function(folder) readRDS(file.path(folder, "downsampling_plot_inputs.rds")))
+stopifnot("the runs have different truth sets" = length(unique(sapply(comparison_runs, `[[`, "n_truth_pairs"))) == 1)
+comparison_prior_names <- sapply(comparison_runs, `[[`, "prior_description")
+prior_colours <- setNames(prior_palette, comparison_prior_names)
+
+# Summary table: one row per prior and call type
+kable(bind_rows(lapply(comparison_runs, function(run) mutate(run$calibration_statistics_table, prior = run$prior_description))) %>%
+        transmute(prior, group, n_calls,
+                  claimed_error_pct = round(100 * mean_claimed_error, 2), observed_error_pct = round(100 * observed_error, 2),
+                  ece_pct = round(100 * ece, 2), spiegelhalter_z_cluster = round(spiegelhalter_z_cluster, 1),
+                  brier = signif(brier, 3), brier_skill_score = round(brier_skill_score, 3)),
+      col.names = c("Prior", "Calls", "n", "Claimed error (%)", "Observed error (%)", "ECE (%)", "Spiegelhalter Z", "Brier", "Brier skill"),
+      format.args = list(big.mark = ","))
+
+# Calibration: bins with enough wrong calls, one line per prior, homozygous and heterozygous calls in separate panels
+calibration_comparison_data <- bind_rows(lapply(comparison_runs, function(run) mutate(run$calibration_table, prior = run$prior_description))) %>%
+  filter(group != "All calls", n_wrong >= minimum_wrong_calls_per_bin) %>%
+  mutate(group = factor(group, levels = c("Homozygous calls", "Heterozygous calls")),
+         prior = factor(prior, levels= comparison_prior_names))
+
+# Panel titles with the number of calls in each group, as a range over the priors (each prior calls a few more or fewer homozygotes)
+calls_per_group <- bind_rows(lapply(comparison_runs, function(run) run$calibration_statistics_table)) %>%
+  filter(group != "All calls") %>%
+  summarise(fewest = min(n_calls), most = max(n_calls), .by = group)
+calibration_panel_labels <- setNames(sprintf("%s (%s\u2013%s calls, %d pairs)", calls_per_group$group,
+                                             label_number(scale_cut = cut_short_scale())(signif(calls_per_group$fewest, 3)),
+                                             label_number(scale_cut = cut_short_scale())(signif(calls_per_group$most, 3)),
+                                             comparison_runs[[1]]$n_truth_pairs), # calls of both panels come from the whole truth set
+                                     calls_per_group$group)
+
+calibration_comparison_plot <- ggplot(calibration_comparison_data, aes(x = claimed_Q, y = empirical_Q, colour = prior, fill = prior)) +
+  annotate("polygon", x = c(0, 60, 0), y = c(0, 60, 60), fill = correct_colour, alpha = 0.08) + 
+  annotate("polygon", x = c(0, 60, 60), y = c(0, 0, 60), fill = error_colour, alpha = 0.08) + 
+  geom_text(data = data.frame(group = factor("Homozygous calls", levels = c("Homozygous calls", "Heterozygous calls")),
+                              x = c(2, 58), y = c(58, 2), label = c("Fewer errors than claimed", "More errors than claimed"),
+                              hjust = c(0, 1), vjust = c(1, 0)),
+            aes(x = x, y = y, label = label, hjust = hjust, vjust = vjust),
+            size = 3.6, colour = "grey30", family = plot_font, inherit.aes = FALSE) + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_ribbon(aes(ymin = bar_Q_low, ymax = bar_Q_high), alpha = 0.18, colour = NA) +
+  geom_path(linewidth = 0.9) +
+  geom_point(size = 1.8) +
+  facet_wrap(~ group, labeller = as_labeller(calibration_panel_labels)) +
+  scale_colour_manual(values = prior_colours) +
+  scale_fill_manual(values = prior_colours) +
+  scale_x_continuous(breaks = seq(0, 60, 10)) +
+  scale_y_continuous(breaks = seq(0, 60, 10)) +
+  coord_equal(xlim = c(0, 60), ylim = c(0, 60), expand = FALSE) +
+  guides(colour = guide_legend(nrow = 1), fill = guide_legend(nrow = 1)) + 
+  labs(title = sprintf("Genotype quality calibration with 95 %% bootstrap band over pairs, %d draws per pair and depth",
+                       comparison_runs[[1]]$draws_per_depth),
+       x = "Claimed GQ", y = "Observed GQ", colour = NULL, fill = NULL) +
+    downsampling_theme +
+  theme(panel.spacing.x = unit(2, "lines")) # space between the two panels
+print(calibration_comparison_plot)
+
+# Error rate against depth: the naive caller once (same draws in every run) and Stan once per prior
+error_comparison_data <- bind_rows(
+  comparison_runs[[1]]$error_by_depth_table %>%
+    transmute(group, depth, line = "Naive", error_rate = Naive, band_low = naive_low, band_high = naive_high),
+  bind_rows(lapply(comparison_runs, function(run) mutate(run$error_by_depth_table, prior = run$prior_description))) %>%
+    transmute(group, depth, line = paste("Stan,", prior), error_rate = `Hierarchical Stan`, band_low = stan_low, band_high = stan_high)) %>%
+  mutate(line = factor(line, levels = c("Naive", paste("Stan,", comparison_prior_names))),
+         across(c(error_rate, band_low, band_high), ~ pmax(.x, lowest_plotted_error))) # log scale cannot show 0
+error_line_colours <- setNames(c("grey40", prior_colours), c("Naive", paste("Stan,", comparison_prior_names)))
+
+
+group_pair_counts <- distinct(comparison_runs[[1]]$error_by_depth_table, group, n_pairs) 
+group_panel_labels <- setNames(sprintf("%s (n = %d)", group_pair_counts$group, group_pair_counts$n_pairs), group_pair_counts$group)
+
+error_comparison_plot <- ggplot(error_comparison_data, aes(x = depth, y = error_rate, colour = line, fill = line)) +
+  geom_ribbon(aes(ymin = band_low, ymax = band_high), alpha = 0.1, colour = NA) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 1.5) +
+  facet_wrap(~ group, labeller = as_labeller(group_panel_labels)) +
+  scale_x_log10(breaks = c(3, 5, 8, 12, 20, 30, 50, 75), expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  scale_y_log10(labels = label_percent(accuracy = 0.001, drop0trailing = TRUE), breaks = c(1e-5, 1e-4, 1e-3, 1e-2, 1e-1),
+                expand = expansion(mult = c(0, 0.03))) +
+  scale_colour_manual(values = error_line_colours) +
+  scale_fill_manual(values = error_line_colours) +
+  guides(colour = guide_legend(nrow = 1), fill = guide_legend(nrow = 1)) +
+  labs(title = sprintf("Genotype error rate against read depth with 95 %% bootstrap band over pairs, %d draws per pair and depth",
+                       comparison_runs[[1]]$draws_per_depth),
+       x = "Reads kept (log)", y = "Wrong calls (log)", colour = NULL, fill = NULL) +
+  downsampling_theme +
+  theme(panel.spacing.x = unit(2, "lines")) 
+
+print(error_comparison_plot)
+
+ggsave(file.path(comparison_parent_folder, "prior_comparison_calibration.png"), calibration_comparison_plot, width = 11.69, height = 8.27, dpi = 300, bg = "white")
+ggsave(file.path(comparison_parent_folder, "prior_comparison_calibration.pdf"), calibration_comparison_plot, width = 11.69, height = 8.27, device = cairo_pdf)
+ggsave(file.path(comparison_parent_folder, "prior_comparison_error_vs_depth.png"), error_comparison_plot, width = 11.69, height = 8.27, dpi = 300, bg = "white")
+ggsave(file.path(comparison_parent_folder, "prior_comparison_error_vs_depth.pdf"), error_comparison_plot, width = 11.69, height = 8.27, device = cairo_pdf)
+```
+
+
+
+## Stan Diagnostic Plots
+This chunk contains MCMC diagnostic plots made with bayesplot package. it contains rank histograms, trace plots, Rhat, effective sample size, and so on. 
+
+```{r Stan_Diagnostic_Plots, fig.width = 11.69, fig.height = 8.27, out.width = "100%", message = FALSE}
+### MCMC diagnostics plots saved to hierarchical bayes folder from the second chunk
+# Ulpoading saved .rds results
+if (!exists("fit_hier")) {
+  stan_plot_inputs_file <- file.path("Results", dataset_name, "Genotypes_results", run_names$bayes_run_name, "stan_plot_inputs.rds")
+  stopifnot("no saved Stan run with these settings, run the Stan model first" = file.exists(stan_plot_inputs_file))
+  list2env(readRDS(stan_plot_inputs_file), envir = environment())
+}
+
+stan_diagnostics_folder <- file.path(stan_graphics_folder, "Stan_Diagnostics_Plots")
+dir.create(stan_diagnostics_folder, showWarnings = FALSE, recursive = TRUE)
+
+color_scheme_set(c("#D9AF6B", "#F1E4DB", "#467378", "#9AA582", "#AF6458", "#657359")) 
+bayesplot_theme_set(theme_minimal(base_family = plot_font, base_size = 12) +
+                      theme(plot.title = element_text(face = "bold", hjust = 0.5),
+                            plot.subtitle = element_text(hjust = 0.5, size = 10),
+                            legend.position = "top",
+                            panel.grid.minor = element_blank()))
+
+# Which mdoel parameters to plot
+phi_hom_parameter <- intersect(c("phi_hom", "mu_log_phi_hom"), fit_hier@model_pars)[1] # list of the parameters
+diagnostic_pars <- c("mu_error", # typical sequencing error rate (logit scale)
+                     "sigma_error_locus", # how much error rate differs between loci
+                     "sigma_error_sample", # between samples
+                     "mu_bias", # typical allele balance in HT (logit scale, 0 = 50/50)
+                     "sigma_bias", # how much allele balance differs between loci
+                     "mu_log_phi_het", # typical overdispersion in HT (log scale)
+                     "sigma_phi_het", # how much it differs between samples
+                     phi_hom_parameter, # overdispersion in HM  (either shared, locus, sample or locussample)
+                     "lp__") # log posterior, how well the parameters fit the data and priors
+slow_mixing_pars <- c("mu_error", "sigma_error_sample", phi_hom_parameter) # the three shown in the rank histogram and autocorrelation plots
+posterior_array_hier <- as.array(fit_hier, pars = diagnostic_pars) # draws*chains*parameters
+nuts_hier <- nuts_params(fit_hier) # divergences, tree depth and energy of every draw
+
+# Rhat of every parameter and effective sample size ratio of every parameter (how many independent draws are my draws worth)
+rhat_hier <- rhat(fit_hier) # measures if the chains agree with each other
+neff_ratio_hier <- neff_ratio(fit_hier) # shouldnt be belowe 0.1
+
+# Plots made inside a list so it can later be used inside for loop, i can get rid of a lot of unnecessary ggsave lines for all the plots
+stan_diagnostic_plots <- list(
+  rank_overlay = mcmc_rank_overlay(posterior_array_hier, ref_line = TRUE, facet_args = list(ncol = 3)) +
+    labs(title = "Rank histograms per chain",
+         subtitle = "Flat and overlapping lines = all chains explore the same distribution"),
+  rank_hist = mcmc_rank_hist(posterior_array_hier, pars = slow_mixing_pars, ref_line = TRUE) +
+    labs(title = "Rank histograms, one panel per chain and parameter"),
+  trace = mcmc_trace(posterior_array_hier, np = nuts_hier, facet_args = list(ncol = 3)) +
+    labs(title = "Trace plots", subtitle = "Chains should overlap like fuzzy caterpillars, divergent draws would be marked in red"),
+  rhat = mcmc_rhat_hist(rhat_hier[is.finite(rhat_hier)], binwidth = 0.0005) +
+    labs(title = sprintf("Rhat of all %d saved quantities", sum(is.finite(rhat_hier))), subtitle = "Below 1.01 = chains agree"),
+  neff = mcmc_neff_hist(neff_ratio_hier[is.finite(neff_ratio_hier)], binwidth = 0.025) +
+    labs(title = "Effective sample size ratio of all saved quantities", subtitle = "Effective draws / total draws, above 0.1 is fine"),
+  autocorrelation = mcmc_acf(posterior_array_hier, pars = slow_mixing_pars, lags = 30) +
+    labs(title = "Autocorrelation per chain", subtitle = "How fast the chains forget their previous draw, faster drop = more effective draws"),
+  energy = mcmc_nuts_energy(nuts_hier) +
+    labs(title = "NUTS energy per chain", subtitle = "The two histograms should overlap, a narrow transition histogram = poor exploration"),
+  pairs = mcmc_pairs(posterior_array_hier, pars = c("mu_error", "sigma_error_locus", "sigma_error_sample", "sigma_phi_het"),
+                     transformations = list(sigma_error_locus = "log", sigma_error_sample = "log", sigma_phi_het = "log"),
+                     np = nuts_hier, off_diag_args = list(size = 0.4, alpha = 0.2),
+                     diag_args = list(bins = 40)))
+
+suppressMessages(for (plot_name in names(stan_diagnostic_plots)) {
+  print(stan_diagnostic_plots[[plot_name]])
+  ggsave(file.path(stan_diagnostics_folder, paste0("diagnostics_", plot_name, ".png")), stan_diagnostic_plots[[plot_name]],
+         width = 11.69, height = 8.27, dpi = 300, bg = "white")
+  ggsave(file.path(stan_diagnostics_folder, paste0("diagnostics_", plot_name, ".pdf")), stan_diagnostic_plots[[plot_name]],
+         width = 11.69, height = 8.27, device = cairo_pdf)
+})
+
+### Combined diagnostics figure: chain agreement, convergence of all parameters, efficiency and exploration
+diagnostics_panel_theme <- theme(plot.title = element_text(face = "bold", hjust = 0, size = 12),
+                                 plot.subtitle = element_text(hjust = 0, size = 9),
+                                 plot.title.position = "plot")
+
+stan_diagnostics_panel <- wrap_plots(
+  A = stan_diagnostic_plots$rank_overlay +
+    scale_x_continuous(expand = c(0, 0)) + 
+    labs(title = sprintf("A  Rank histograms per chain: %d chains x %d draws, %d divergent transitions",
+                         stan_chains, stan_iter - stan_warmup, get_num_divergent(fit_hier)),
+         subtitle = NULL) +
+    diagnostics_panel_theme + theme(panel.spacing.x = unit(1.5, "lines"), 
+                                    legend.margin = margin(0, 0, 0, 0), 
+                                    legend.box.spacing = unit(2, "pt")), 
+  B = stan_diagnostic_plots$rhat +
+    labs(title = sprintf("B  Rhat: max %.3f, %d of %d below 1.01", max(rhat_hier, na.rm = TRUE),
+                         sum(rhat_hier < 1.01, na.rm = TRUE), sum(is.finite(rhat_hier))),
+         subtitle = NULL) +
+    diagnostics_panel_theme + theme(legend.position = "none"),
+  C = stan_diagnostic_plots$neff +
+    geom_vline(xintercept = 0.1, linetype = "dashed", colour = "#7E4038", linewidth = 0.6) + # 0.1 = threshold
+    labs(title = "C  Sampling efficiency: effective / total draws", subtitle = NULL) + diagnostics_panel_theme +
+    theme(legend.text = element_text(size = 10), 
+          legend.key.size = unit(11, "pt"), 
+          legend.position = "inside",
+          legend.position.inside = c(0.98, 0.98), legend.justification.inside = c(1, 1), 
+          legend.direction = "vertical", 
+          legend.background = element_rect(fill = "white", colour = NA)), 
+  D = mcmc_nuts_energy(nuts_hier, merge_chains = TRUE) + 
+    labs(title = "D  NUTS energy: overlap = full exploration", subtitle = NULL) + diagnostics_panel_theme +
+    theme(legend.text = element_text(size = 11), 
+          legend.key.size = unit(11, "pt"), 
+          legend.position = "inside",
+          legend.position.inside = c(0.98, 0.98), legend.justification.inside = c(1, 1),
+          legend.direction = "vertical",
+          legend.background = element_rect(fill = "white", colour = NA)),
+  design = "AAA\nBCD", heights = c(1.6, 1))
+
+print(stan_diagnostics_panel)
+ggsave(file.path(stan_diagnostics_folder, "diagnostics_panel.png"), stan_diagnostics_panel, width = 11.69, height = 8.27, dpi = 300, bg = "white")
+ggsave(file.path(stan_diagnostics_folder, "diagnostics_panel.pdf"), stan_diagnostics_panel, width = 11.69, height = 8.27, device = cairo_pdf)
+```
+
+
+
+## Stan Results Plots
+This chunk contains plots for the estimated results from hierrarchical model, that is wolf ancestry and admixture per sample (results show three possible candidates, one dog and two hybrids) and two panels of estimated error rate per locus and per sample with HT overdispersion per sample. I tried to combine it with previous result, such as loci with homopolymer sites (diamonds as in previous plots for continuity), miscall per loci with crosses, red loci names showing the ones with most ties during alignment scoring and indels per read colour mapping. Maybe its a bit too much, maybe I'll clean it up so its not too hectic.
+  
+```{r Stan_Results_Plots, out.width = "100%"}
+### Plots for model estimates showing error rate per locus and sample, and computed ancestry and admixture
+# Importing saved .rds when only running the plots
+if (!exists("fit_hier")) {
+  stan_plot_inputs_file <- file.path("Results", dataset_name, "Genotypes_results", run_names$bayes_run_name, "stan_plot_inputs.rds")
+  stopifnot("no saved Stan run with these settings, run the Stan model first" = file.exists(stan_plot_inputs_file))
+  list2env(readRDS(stan_plot_inputs_file), envir = environment())}
+
+phi_hom_parameter <- intersect(c("phi_hom", "mu_log_phi_hom"), fit_hier@model_pars)[1] # which phi_hom version this run used
+stan_results_folder <- file.path(stan_graphics_folder, "Stan_Results_Plots")
+dir.create(stan_results_folder, showWarnings = FALSE, recursive = TRUE)
+
+# Same colour pallete as before
+result_main_colour <- "#467378"
+result_raw_colour <- "#8B775F"
+results_theme <- theme_minimal(base_family = plot_font, base_size = 11) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, size = 9),
+        legend.position = "top",
+        panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_blank())
+
+called_class_hier <- max.col(post_hier, ties.method = "first") # called genotype of every pair
+
+# Possible ancestry classs
+ancestry_class_levels <- c("Wolf-like", "Backcross to wolf", "F1-like", "Backcross to dog", "Dog-like")
+ancestry_class_colours <- setNames(c("#467378", "#D9AF6B", "#C98A4E", "#AF6458", "#7E4038"), ancestry_class_levels)
+  
+### 1. Plot, wolf ancestry per sample (only plotted when ancestry prior is used)
+# Ancestry class of every sample for colouring the sample plots
+sample_ancestry_class <- data.frame(sample = samples_hier, ancestry_class = factor("Wolf-like", levels = ancestry_class_levels))
+
+if (prior_type == "ancestry") {
+  # takes all the posterior draws for ancestry 
+  wolf_ancestry_draws <- as.matrix(fit_hier, pars = "wolf_ancestry")
+  
+  ancestry_summary <- data.frame(sample = rep(samples_hier, each = nrow(wolf_ancestry_draws)), # one row per draw and sample
+                               ancestry = as.vector(wolf_ancestry_draws)) %>%
+  summarise(low95 = quantile(ancestry, 0.025), low50 = quantile(ancestry, 0.25), median = median(ancestry),
+            high50 = quantile(ancestry, 0.75), high95 = quantile(ancestry, 0.975), .by = sample) %>%
+  mutate(ancestry_class = case_when(median >= 0.875 ~ "Wolf-like", # 1, 0.75, 0.5, 0.25, 0
+                                    median >= 0.625 ~ "Backcross to wolf",
+                                    median >= 0.375 ~ "F1-like",
+                                    median >= 0.125 ~ "Backcross to dog",
+                                    TRUE ~ "Dog-like"),
+         ancestry_class = factor(ancestry_class, levels = ancestry_class_levels),
+         sample = factor(sample, levels = sample[order(median)])) # plot order
+  sample_ancestry_class <- transmute(ancestry_summary, sample = as.character(sample), ancestry_class)
+
+  # Sensitivity run for Beta(0.5, 0.5) is plotted as well if it exists.
+  comparison_shape <- if (ancestry_prior_shape == 1) 0.5 else 1
+  comparison_run_file <- file.path("Results", dataset_name, "Genotypes_results",
+                                   sub("_b[0-9.]+", paste0("_b", comparison_shape), run_names$bayes_run_name),
+                                   "sample_parameters_hierarchical.tsv")
+  has_comparison_run <- file.exists(comparison_run_file)
+  ancestry_comparison <- if (has_comparison_run) {
+    read_tsv(comparison_run_file, show_col_types = FALSE) %>%
+      transmute(sample = factor(barcode, levels = levels(ancestry_summary$sample)),
+                estimate = wolf_ancestry, low95 = wolf_ancestry_low, high95 = wolf_ancestry_high)
+  } else data.frame(sample = factor(levels = levels(ancestry_summary$sample)), estimate = numeric(), low95 = numeric(), high95 = numeric()) # empty so nothing is drawn
+
+  p_ancestry <- ggplot(ancestry_summary, aes(y = sample)) +
+    geom_vline(xintercept = c(0.25, 0.5, 0.75), colour = "grey85", linetype = "dotted") +
+    geom_vline(xintercept = 0.93, colour = "grey45", linetype = "dashed") +
+    geom_linerange(data = ancestry_comparison, aes(xmin = low95, xmax = high95), colour = "grey70", linewidth = 0.6,
+                   position = position_nudge(y = -0.3)) +
+    geom_point(data = ancestry_comparison, aes(x = estimate), colour = "grey55", size = 1.1, shape = 4,
+               position = position_nudge(y = -0.3)) + # sensitivity run below in grey
+    geom_linerange(aes(xmin = low95, xmax = high95, colour = ancestry_class), linewidth = 0.6) +
+    geom_linerange(aes(xmin = low50, xmax = high50, colour = ancestry_class), linewidth = 2) +
+    geom_point(aes(x = median, colour = ancestry_class), size = 2.2, shape = 21, fill = "white", stroke = 1) +
+    annotate("text", x = 0.925, y = 1, label = "q = 0.93\n(Harmoinen et al. 2021)", hjust = 1, size = 3,
+             family = plot_font, colour = "grey35") +
+    scale_colour_manual(values = ancestry_class_colours, breaks = ancestry_class_levels, name = NULL) +
+    scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2), expand = expansion(mult = c(0.01, 0.02))) +
+    labs(title = sprintf("Wolf ancestry per sample with 50 %% and 95 %% credible intervals for Beta(%g, %g)%s",
+                         ancestry_prior_shape, ancestry_prior_shape,
+                         if (has_comparison_run) sprintf("\nand grey sensitivity run Beta(%g, %g)", comparison_shape,
+                            comparison_shape) else ""), x = "Wolf ancestry (0 = dog, 1 = wolf)", y = NULL) +
+    results_theme + theme(legend.position = "bottom")
+}
+
+# Per sample from the reads, mean depth and number of HT calls shown in the middle column for extra data.
+sample_read_summary <- data.frame(sample = samples_hier[stan_data_hier$sample_id],
+                                  d = stan_data_hier$d, called = called_class_hier) %>%
+  summarise(mean_depth = mean(d), n_het = sum(called == 3), .by = sample)
+
+### 2. Plot, Eeror rate per locus coloured by indels per read, wth extra data from previous plots for contiunuity
+typical_error_pct <- 100 * max_error * plogis(median(as.matrix(fit_hier, pars = "mu_error"))) # typical error %
+
+# Read-leve table from the 06a for homopolymer detection
+locus_qc_file <- file.path("Results", dataset_name, "Graphics", "Demultiplexing_and_Filtration_Visualization", "locus_indel_homopolymer_summary.tsv")
+locus_qc <- if (file.exists(locus_qc_file)) {
+  read_tsv(locus_qc_file, show_col_types = FALSE) %>% select(locus, tie, indel_raw, hp_len_primer)
+} else data.frame(locus = loci_hier, tie = NA_real_, indel_raw = NA_real_, hp_len_primer = NA_real_)
+
+# Observed error, share of minor allele frequency in HM pairs
+raw_error_by_locus <- data.frame(locus = loci_hier[stan_data_hier$locus_id], k = stan_data_hier$k, d = stan_data_hier$d, called = called_class_hier) %>%
+  filter(called != 3) %>% # HM only
+  summarise(raw_error = 100 * sum(ifelse(called == 1, d - k, k)) / sum(d), .by = locus) # wrong-allele votes / all votes
+
+# Stan genotype calls that differ from the reference genotype 
+reference_genotypes_plot <- read_tsv(file.path("Data/Supporting_data/Reference_genotypes", paste0("genotypes_", dataset_name, ".tsv")), show_col_types = FALSE, col_types = cols(.default = col_character()))
+
+stan_miscalls <- combined_genotypes_hier %>%
+  select(barcode, locus, depth, GQ, genotype_stan) %>%
+  inner_join(select(reference_genotypes_plot, barcode = sample_id, locus, reference = genotype), by = c("barcode", "locus")) %>%
+  filter(!is.na(genotype_stan), !is.na(reference),
+         genotype_stan != reference, # differs as written or swapped letters
+         genotype_stan != paste0(substr(reference, 2, 2), substr(reference, 1, 1))) %>%
+  arrange(locus, barcode)
+
+kable(stan_miscalls, col.names = c("Sample", "Locus", "Depth", "GQ", "Stan call", "Reference"))
+
+error_locus_summary <- data.frame(locus = rep(loci_hier, each = nrow(draws_hier$error_locus)),
+                                  error = 100 * as.vector(draws_hier$error_locus)) %>%
+  summarise(low95 = quantile(error, 0.025), low50 = quantile(error, 0.25), median = median(error),
+            high50 = quantile(error, 0.75), high95 = quantile(error, 0.975), .by = locus) %>%
+  left_join(locus_qc, by = "locus") %>%
+  left_join(raw_error_by_locus, by = "locus") %>%
+  left_join(count(stan_miscalls, locus, name = "n_miscalls"), by = "locus") %>%
+  mutate(high_ties = rank(-tie, na.last = "keep") <= 3, # the three loci with the most ties from 06
+         primer_homopolymer = hp_len_primer >= 5, # sae diamonds to show them
+         locus = sub("_rs\\d+$", "", locus), # shorter TIGRP locus names for TIGR loci
+         locus = factor(locus, levels = locus[order(median)]))
+
+locus_marks <- c("Observed error" = 16, "Miscall vs reference" = 4, "Primer homopolymer \u2265 5 nt" = 18) # dot, x and diamond
+
+p_error_locus <- ggplot(error_locus_summary, aes(y = locus)) +
+  geom_vline(xintercept = typical_error_pct, colour = "grey40", linetype = "dashed") +
+  annotate("text", x = typical_error_pct, y = Inf, vjust = -0.5, size = 3, family = plot_font, colour = "grey30",
+           label = sprintf("Typical error: %.2f %%", typical_error_pct)) +
+  geom_linerange(aes(xmin = low95, xmax = high95, colour = indel_raw), linewidth = 0.5) +
+  geom_linerange(aes(xmin = low50, xmax = high50, colour = indel_raw), linewidth = 1.6) +
+  geom_point(aes(x = median, colour = indel_raw), shape = 21, fill = "white", size = 2, stroke = 0.9) +
+  geom_point(aes(x = raw_error, shape = "Observed error"), colour = "grey45", size = 1.3) + # observed share
+  geom_point(data = filter(error_locus_summary, n_miscalls > 0), aes(x = ifelse(primer_homopolymer %in% TRUE, 0.07, 0), shape = "Miscall vs reference"), colour = "grey10", size = 2, stroke = 1) +
+  geom_point(data = filter(error_locus_summary, primer_homopolymer %in% TRUE), aes(x = 0, shape = "Primer homopolymer \u2265 5 nt"),
+             size = 3, colour = "grey20") + # diamond at the left edge
+  geom_text(aes(x = -Inf, label = paste0(locus, "  ")), hjust = 1, size = 7.5 / .pt, family = "mono", 
+            colour = ifelse(error_locus_summary$high_ties %in% TRUE, "#AF6458", "grey30"),
+            fontface = ifelse(error_locus_summary$high_ties %in% TRUE, "bold", "plain")) +
+  scale_colour_gradientn(colours = c("#E6CBC1", "#C98A7E", "#AF6458", "#7E4038"), # colour gradient for indels
+                         na.value = result_main_colour, name = "Indels per read") +
+  scale_shape_manual(values = locus_marks, breaks = names(locus_marks), name = NULL) +
+  coord_cartesian(clip = "off") +
+  guides(colour = guide_colourbar(order = 1, title.position = "left", title.vjust = 1, barwidth = unit(3, "cm"), barheight = unit(0.3, "cm")), shape = guide_legend(order = 2, keyheight = unit(0.3, "cm"), override.aes = list(size = c(1.6, 2, 3), colour = c("grey45", "grey10", "grey20")))) +
+  labs(title = "Sequencing error rate per locus for a typical sample", x = "Error rate (%)", y = NULL) +
+  results_theme +
+  theme(legend.position = "bottom",
+        legend.box.just = "top", legend.spacing.x = unit(10, "pt"), 
+        legend.justification = "center", legend.location = "plot", 
+        plot.title = element_text(face = "bold", hjust = 0.5, margin = margin(b = 14)), 
+        axis.text.y = element_text(family = "mono", size = 7.5, colour = "transparent"),
+        legend.title = element_text(size = 10), legend.text = element_text(size = 10))
+
+### 3. Overdispersion per sample, as effective number sample size in a HT
+phi_het_sample_summary <- data.frame(sample = rep(samples_hier, each = nrow(draws_hier$phi_het_sample)), 
+                                     effective_size = as.vector(draws_hier$phi_het_sample) + 1) %>% #effective sample size 
+  summarise(low95 = quantile(effective_size, 0.025), low50 = quantile(effective_size, 0.25), median = median(effective_size),
+            high50 = quantile(effective_size, 0.75), high95 = quantile(effective_size, 0.975), .by = sample) %>%
+  left_join(sample_ancestry_class, by = "sample") %>%
+  mutate(sample = factor(sample, levels = sample[order(median)]))
+
+p_phi_het_sample <- ggplot(phi_het_sample_summary, aes(y = sample, colour = ancestry_class)) +
+  geom_vline(xintercept = median(draws_hier$phi_het) + 1, colour = "grey40", linetype = "dashed") +
+  annotate("text", x = median(draws_hier$phi_het) + 1, y = Inf, vjust = -0.5, size = 3, family = plot_font, colour = "grey30",
+           label = sprintf("Typical sample: %.0f", median(draws_hier$phi_het) + 1)) +
+  coord_cartesian(clip = "off") +
+  geom_linerange(aes(xmin = low95, xmax = high95), linewidth = 0.5) +
+  geom_linerange(aes(xmin = low50, xmax = high50), linewidth = 1.6) +
+  geom_point(aes(x = median), shape = 21, fill = "white", size = 2, stroke = 0.9) +
+  scale_colour_manual(values = ancestry_class_colours, breaks = ancestry_class_levels, name = NULL) +
+  labs(title = "B  Effective sample size of the HT read split per sample",
+       x = "Effective sample size (higher = closer to binomial)", y = NULL) +
+  results_theme
+
+
+### 4. Error rate per sample
+error_sample_summary <- data.frame(sample = rep(samples_hier, each = nrow(draws_hier$error_sample)),
+                                   error = 100 * as.vector(draws_hier$error_sample)) %>% # in %
+  summarise(low95 = quantile(error, 0.025), low50 = quantile(error, 0.25), median = median(error),
+            high50 = quantile(error, 0.75), high95 = quantile(error, 0.975), .by = sample) %>%
+  left_join(sample_ancestry_class, by = "sample") %>%
+  left_join(sample_read_summary, by = "sample") %>% # mean depth and HT calls for the middle column showin gmore data
+  mutate(sample = factor(sample, levels = sample[order(median)]))
+
+p_error_sample <- ggplot(error_sample_summary, aes(y = sample, colour = ancestry_class)) +
+  geom_vline(xintercept = typical_error_pct, colour = "grey40", linetype = "dashed") +
+  annotate("text", x = typical_error_pct, y = Inf, vjust = -0.5, size = 3, family = plot_font, colour = "grey30",
+           label = sprintf("Typical error: %.2f %%", typical_error_pct)) +
+  coord_cartesian(clip = "off") +
+  geom_linerange(aes(xmin = low95, xmax = high95), linewidth = 0.5) +
+  geom_linerange(aes(xmin = low50, xmax = high50), linewidth = 1.6) +
+  geom_point(aes(x = median), shape = 21, fill = "white", size = 2, stroke = 0.9) +
+  scale_colour_manual(values = ancestry_class_colours, breaks = ancestry_class_levels, name = NULL) +
+  labs(title = "A  Sequencing error rate per sample with locus effect set to average",
+       x = "Error rate (%)", y = NULL) +
+  results_theme
+
+### Combined panel for sample error rate and overdispersion with middle column
+sample_panel_theme <- theme(plot.title = element_text(face = "bold", hjust = 0, size = 12),
+                            plot.subtitle = element_text(hjust = 0, size = 9, margin = margin(b = 14)), 
+                            plot.title.position = "plot")
+sample_panel_order <- levels(error_sample_summary$sample) # sorted by error rate used by all
+
+# Middle column made for small heatmap, values from 0-1
+sample_counts_data <- error_sample_summary %>%
+  mutate(depth_fill = rescale(mean_depth), het_fill = rescale(n_het))
+
+p_sample_counts <- ggplot(sample_counts_data, aes(y = sample)) +
+  geom_tile(aes(x = 1, fill = depth_fill), width = 1, height = 1, colour = "black", linewidth = 0.2) +
+  geom_tile(aes(x = 2, fill = het_fill), width = 1, height = 1, colour = "black", linewidth = 0.2) +
+  geom_text(aes(x = 1, label = comma(round(mean_depth)), colour = depth_fill > 0.6), size = 2.3, family = plot_font) +
+  geom_text(aes(x = 2, label = n_het, colour = het_fill > 0.6), size = 2.3, family = plot_font) +
+  scale_fill_gradientn(colours = c("#F1E4DB", "#D9AF6B", "#C98A4E", "#7E4038"), guide = "none") +
+  scale_colour_manual(values = c(`FALSE` = "grey15", `TRUE` = "white"), guide = "none") +
+  scale_x_continuous(breaks = c(1, 2), labels = c("Mean\nreads", "HT\ncalls"), limits = c(0.5, 2.5), position = "top") +
+  labs(x = NULL, y = NULL) +
+  theme_void(base_family = plot_font) +
+  theme(axis.text.x.top = element_text(face = "bold", size = 7, lineheight = 0.9, colour = "grey15"))
+
+  # Combines into panel
+p_sample_quality_panel <- wrap_plots(p_error_sample + sample_panel_theme,p_sample_counts,
+                                     p_phi_het_sample + scale_y_discrete(limits = sample_panel_order) + sample_panel_theme + theme(axis.text.y = element_blank()), nrow = 1, widths = c(4, 0.45, 4), guides = "collect") & theme(legend.position = "bottom")
+
+###  5. plot, wolf ancestry against the share of HT calls over all loci, with plotted expected share of HT loci for every specifi qvalue if the popualtion was free mixing over mulitple generations. 
+
+if (prior_type == "ancestry") {
+  wolf_frequency <- stan_data_hier$p_wolf
+  dog_frequency <- stan_data_hier$p_dog
+
+  # Observed share of HT calls for every sample over all the 33 loci
+  triangle_samples <- data.frame(sample = samples_hier[stan_data_hier$sample_id], het = called_class_hier == 3) %>% # finds HT
+    summarise(heterozygosity = mean(het), .by = sample) %>% #share of HT per sample 
+    left_join(transmute(ancestry_summary, sample = as.character(sample), median, low95, high95, ancestry_class), by = "sample")
+
+  # Calculates expected share of HT for each type
+  f1_gamete <- (wolf_frequency + dog_frequency) / 2 # allele 1 probability in F1
+  cross_reference <- data.frame(
+    cross = c("Wolf", "Backcross to wolf", "F1", "Backcross to dog", "Dog"),
+    ancestry = c(1, 0.75, 0.5, 0.25, 0),
+    heterozygosity = c(mean(2 * wolf_frequency * (1 - wolf_frequency)), # wolf
+                       mean(wolf_frequency * (1 - f1_gamete) + f1_gamete * (1 - wolf_frequency)),
+                       mean(wolf_frequency * (1 - dog_frequency) + dog_frequency * (1 - wolf_frequency)),
+                       mean(dog_frequency * (1 - f1_gamete) + f1_gamete * (1 - dog_frequency)),
+                       mean(2 * dog_frequency * (1 - dog_frequency)))) # Dog
+
+  #Calculation for late generation hybrids in admixed population, share of HT for every possible q value, draws the dashed curved line
+  admixed_curve <- data.frame(ancestry = seq(0, 1, 0.01)) %>%
+    mutate(heterozygosity = sapply(ancestry, function(q)
+      mean(2 * (q * wolf_frequency + (1 - q) * dog_frequency) * (1 - (q * wolf_frequency + (1 - q) * dog_frequency)))))
+
+  mark_items <- c("Expected cross", "Later generations")
+
+  p_ancestry_HT <- ggplot() +
+    geom_line(data = admixed_curve, aes(x = ancestry, y = heterozygosity, linetype = "Later generations"), colour = "grey60") +
+    geom_point(data = cross_reference, aes(x = ancestry, y = heterozygosity, shape = "Expected cross"),
+               size = 3.5, colour = "grey30", fill = "white") +
+    geom_text(data = cross_reference, aes(x = ancestry, y = heterozygosity, label = cross), vjust = -1.1, size = 3,
+              family = plot_font, colour = "grey30") +
+    geom_errorbar(data = triangle_samples, aes(y = heterozygosity, xmin = low95, xmax = high95, colour = ancestry_class),
+                  orientation = "y", width = 0, linewidth = 0.4, alpha = 0.7) +
+    geom_point(data = triangle_samples, aes(x = median, y = heterozygosity, colour = ancestry_class), size = 2.6) +
+    geom_text(data = filter(triangle_samples, ancestry_class != "Wolf-like"), aes(x = median, y = heterozygosity, label = sample),
+              hjust = -0.15, vjust = 1.4, size = 3, family = plot_font) +
+    scale_colour_manual(values = ancestry_class_colours, breaks = ancestry_class_levels, name = NULL) +
+    scale_shape_manual(values = c(23, NA), breaks = mark_items, limits = mark_items, name = NULL) +
+    scale_linetype_manual(values = c("blank", "dashed"), breaks = mark_items, limits = mark_items, name = NULL) + #dashed for the line
+    scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.25)) +
+    scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.12))) +
+    guides(colour = guide_legend(order = 1), shape = guide_legend(order = 2), linetype = guide_legend(order = 2)) +
+  labs(title = sprintf("Ancestry against heterozygosity, %d loci (median and 95 %% interval)", length(wolf_frequency)),
+         x = "Wolf ancestry", y = "Share of HT calls") +
+    results_theme +
+    theme(legend.position = "bottom", legend.box = "horizontal", legend.spacing.x = unit(3, "pt"),
+      legend.text = element_text(size = 8, margin = margin(l = 2, r = 6)), legend.key.width = unit(12, "pt"),
+      legend.key.height = unit(10, "pt"), legend.box.spacing = unit(4, "pt"), panel.grid.major.y = element_line(colour = "grey92"))
+}
+
+
+### 7. Plot showing genotypes results with  allele 1 read share against depth, with call boundaries for every sample pair with a flat prior. coloured by GQ
+
+# Gets median error, allele bias and overdispersion from the fitted model for the typical pair used for the boundaries
+typical_error <- typical_error_pct / 100
+typical_het_fraction <- stan_data_hier$het_min + (1 - 2 * stan_data_hier$het_min) * plogis(median(as.matrix(fit_hier, pars = "mu_bias")))
+typical_phi_het <- median(draws_hier$phi_het)
+typical_phi_hom <- if (phi_hom_parameter == "phi_hom") median(as.matrix(fit_hier, pars = "phi_hom")) else 10 + exp(median(as.matrix(fit_hier, pars = "mu_log_phi_hom")))
+typical_p_het <- typical_het_fraction * (1 - typical_error) + (1 - typical_het_fraction) * typical_error
+
+# where the boundaries are calculated
+genotype_depths <- unique(c(3:100, round(10^seq(2, log10(max(stan_data_hier$d)), length.out = 60))))
+
+# Expected allele 1 share (p) and overdispersion (phi) of each genotype
+genotype_models <- data.frame(genotype = c("HM allele 1", "HT", "HM allele 2"),
+                              p = c(1 - typical_error, typical_p_het, typical_error),
+                              phi = c(typical_phi_hom, typical_phi_het, typical_phi_hom))
+
+# For every depth and allele 1 count computes the genotype with the highest beta-binomial likelihood
+call_boundaries <- data.frame(d = genotype_depths) %>%
+  reframe(k = 0:d, .by = d) %>% # every possible allele 1 count at every depth
+  cross_join(genotype_models) %>% # once per genotype
+  mutate(log_likelihood = lbeta(k + p * phi, d - k + (1 - p) * phi) - lbeta(p * phi, (1 - p) * phi)) %>%
+  filter(log_likelihood == max(log_likelihood), .by = c(d, k)) %>% #keeps the best one
+  filter(genotype == "HT") %>%
+  summarise(het_low = min(k) - 0.5, het_high = max(k) + 0.5, .by = d) # midway point for calls on boundaries
+
+genotype_cloud <- data.frame(allele1_reads = stan_data_hier$k, allele2_reads = stan_data_hier$d - stan_data_hier$k,
+                             called = factor(c("HM allele 1", "HM allele 2", "HT")[called_class_hier],
+                                             levels = c("HM allele 1", "HT", "HM allele 2")),
+                             confident = stan_rows_hier$GQ >= 20)
+read_breaks <- c(0, 1, 10, 100, 1000, 10000)
+
+p_genotypes_plot <- ggplot(genotype_cloud, aes(x = allele2_reads + 1, y = allele1_reads + 1)) +
+  geom_path(data = call_boundaries, aes(x = d - het_low + 1, y = het_low + 1), colour = result_raw_colour, linetype = "dashed", inherit.aes = FALSE) +
+  geom_path(data = call_boundaries, aes(x = d - het_high + 1, y = het_high + 1), colour = result_raw_colour, linetype = "dashed", inherit.aes = FALSE) +
+  geom_point(aes(colour = called, shape = confident), size = 1.4, alpha = 0.8, stroke = 0.7) +
+  scale_colour_manual(values = c("HM allele 1" = "#476F84", "HT" = "#A4552A", "HM allele 2" = "#A4BED5"), name = NULL) +
+  scale_shape_manual(values = c(`TRUE` = 16, `FALSE` = 1), labels = c(`TRUE` = "GQ >= 20", `FALSE` = "GQ < 20"), name = NULL) +
+  scale_x_log10(breaks = read_breaks + 1, labels = label_comma()(read_breaks)) +
+  scale_y_log10(breaks = read_breaks + 1, labels = label_comma()(read_breaks)) +
+  coord_equal() +
+  guides(colour = guide_legend(order = 1, override.aes = list(shape = 16, size = 2.5, alpha = 1)),
+         shape = guide_legend(order = 2, override.aes = list(size = 2.5, colour = "grey20"))) +
+  labs(title = "Allele 1 reads against allele 2 reads with call boundary for typical pair with a flat prior",
+       x = "Allele 2 reads (log scale)", y = "Allele 1 reads (log scale)") +
+  results_theme +
+  theme(panel.grid.major.y = element_line(colour = "grey92"), panel.grid.major.x = element_line(colour = "grey92"),
+                        plot.title = element_text(size = 11), plot.title.position = "plot",
+                        legend.position = "right", legend.spacing.y = unit(4, "pt"))
+
+### Saving plots, ancestry plots only when they exist
+if (prior_type == "ancestry") {
+  ggsave(file.path(stan_results_folder, "results_ancestry.png"), p_ancestry, width = 8.27, height = 7, dpi = 300, bg = "white")
+  ggsave(file.path(stan_results_folder, "results_ancestry.pdf"), p_ancestry, width = 8.27, height = 7, device = cairo_pdf)
+  ggsave(file.path(stan_results_folder, "results_ancestry_HT.png"), p_ancestry_HT, width = 16, height = 12.7, units = "cm", dpi = 300, bg = "white")
+  ggsave(file.path(stan_results_folder, "results_ancestry_HT.pdf"), p_ancestry_HT, width = 16, height = 12.7, units = "cm", device = cairo_pdf)
+include_graphics(normalizePath(file.path(stan_results_folder, c("results_ancestry.png", "results_ancestry_HT.png"))), rel_path = FALSE, error = FALSE)
+}
+
+ggsave(file.path(stan_results_folder, "results_errorrate_locus.png"), p_error_locus, width = 8.27, height = 7, dpi = 300, bg = "white")
+ggsave(file.path(stan_results_folder, "results_errorrate_locus.pdf"), p_error_locus, width = 8.27, height = 7, device = cairo_pdf)
+include_graphics(normalizePath(file.path(stan_results_folder, "results_errorrate_locus.png")), rel_path = FALSE, error = FALSE)
+
+ggsave(file.path(stan_results_folder, "results_sample_quality_panel.png"), p_sample_quality_panel, width = 11.69, height = 8.27, dpi = 300, bg = "white")
+ggsave(file.path(stan_results_folder, "results_sample_quality_panel.pdf"), p_sample_quality_panel, width = 11.69, height = 8.27, device = cairo_pdf)
+include_graphics(normalizePath(file.path(stan_results_folder, "results_sample_quality_panel.png")), rel_path = FALSE, error = FALSE)
+
+
+ggsave(file.path(stan_results_folder, "results_genotypes.png"), p_genotypes_plot, width = 16, height = 12.7, units = "cm", dpi = 300, bg = "white")
+ggsave(file.path(stan_results_folder, "results_genotypes.pdf"), p_genotypes_plot, width = 16, height = 12.7, units = "cm", device = cairo_pdf)
+include_graphics(normalizePath(file.path(stan_results_folder, "results_genotypes.png")), rel_path = FALSE, error = FALSE)
+```
+
+
+
+<details><summary>Settings used for this run</summary>
+
+```{r settings_table, echo = FALSE}
+kable(settings_used, row.names = FALSE, col.names = c("Setting", "Value"))
+```
+
+</details>
+
+
+## Reproducibility
+
+<details><summary>Session info</summary>
+
+```{r session_info}
+sessionInfo()
+```
+
+</details>

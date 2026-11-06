@@ -82,12 +82,6 @@ settings_05_bayesian:
   minimum_reads_for_truth_pair: 75
   bootstrap_rounds: 1000
 
-settings_06_visualization:
-  run_basic_plots: true
-  run_filtration_parameters: true
-  run_speedopt_diagnosis: true
-  run_filtration_vis: true
-
 settings_07_failed_genotypes:
   failed_genotypes_source: "asp_genotypes" # "bayes_genotypes" or "asp_genotypes", which genotype calls are compared with the reference
   failed_max_reads_plotted: 20 # reads drawn per plot, the .tsv table keeps every read

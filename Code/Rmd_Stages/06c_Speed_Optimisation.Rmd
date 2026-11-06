@@ -1,0 +1,529 @@
+---
+title: "Stage 06c: Speed optimisation"
+subtitle: "`r paste0('Dataset: ', params$dataset_name, ' - ', params$n_barcodes, ' barcodes')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: hide
+    df_print: kable
+    highlight: tango
+    theme:
+      version: 5
+      bg: "#FFFFFF"
+      fg: "#2E2A26"
+      primary: "#657359"
+      secondary: "#8B775F"
+      base_font: "Times New Roman"
+      heading_font: "Times New Roman"
+      headings-font-weight: 700
+      code_font:
+        google: "JetBrains Mono"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+params:
+  # Dataset
+  dataset_name: "big" # small or big
+  n_barcodes: 24 # 6 for the small dataset, 24 for the big dataset
+  
+  # ASP run to plot, these are the same as the master pipeline of the current run (they also make up its results folder name)
+  input_type: "unpadded" # "padded" or "unpadded"
+  probe_type: "asp_primers" # "asp_primers" or "reference"
+  use_anchors: true
+  anchor_length: 3
+  threshold_type: "errors" # "fraction" or "errors"
+  min_score_fraction: 0.65 # "fraction" only
+  error_rate: 0.08 # "errors" only
+---
+
+```{r knitr_options, include = FALSE}
+library(knitr)
+opts_chunk$set(comment = "", message = FALSE, class.output = "scroll-output")
+```
+
+```{css, echo = FALSE}
+pre, pre code { white-space: pre-wrap; word-break: break-word; }
+.scroll-output { max-height: 250px; overflow-y: auto; }
+p, li { text-align: justify; hyphens: auto; }
+```
+
+This script uses a lot of different chunks to visualize different genotyping results from different methods. Its really kinda long, before every chunk is a quick description of what im trying to show with the plots and some ideas and questions I was trying to answer with the visualization. Plots are saved inside Results/dataset_name/Graphics/...
+
+After completing this script, move on to 07_Failed_Genotypes_Analysis.Rmd
+
+## Settings, paths and basic setup
+This chunks contain libraries, global settings, editable variables used by the whole .Rmd and paths for necessary input files.
+
+```{r setup, results = "hide"}
+suppressMessages({
+  library(grid)
+  library(ggplot2)
+  library(dplyr)
+  library(tidyr)
+  library(readr)
+  library(knitr)
+})
+
+# Settings come from the params block in the YAML header, this turns them into usable variables
+invisible(list2env(params, envir = environment()))
+settings_used <- data.frame(setting = c("run_date", names(params)),
+                            value = c(format(Sys.time(), "%Y-%m-%d %H:%M"),
+                                      vapply(params, function(setting_value) paste(setting_value, collapse = ", "), character(1))))
+# Uploading shared functions
+source("Code/R_scripts/asp_functions.R", local = TRUE)
+
+plot_font <- "Times New Roman"
+theme_set(theme_minimal(base_family = plot_font))
+
+# Paths for genotype and graphics outputs
+graphics_dir <- file.path("Results", dataset_name, "Graphics") 
+genotypes_dir <- file.path("Results", dataset_name, "Genotypes_results")
+
+# Shared function for building accurate settings based folder names
+run_names <- build_run_names(input_type, use_anchors, anchor_length, threshold_type, error_rate, min_score_fraction, probe_type = probe_type)
+
+asp_reads_path <- file.path(genotypes_dir, run_names$asp_run_name, "all_barcodes_asp_reads.tsv")
+ref_path <- file.path("Data/Supporting_data/Reference_genotypes", paste0("genotypes_", dataset_name, ".tsv")) # Genotype references
+
+# Imported shared data between all chunks, loaded and cleaned once in setup
+ref <- read_tsv(ref_path, show_col_types = FALSE) %>%
+  transmute(sample = sample_id, locus, genotype, method = "reference")
+```
+
+
+
+## Speed optimization analysis - basic bar plots 
+
+These three plots show progress of speed optimization analysis from naive v1 to last v11 with all the updates. Plots both for small and big dataset and comparison of reads per second for the big data set.
+
+```{r Speed_Optimization_Analysis, fig.width = 12, fig.height = 6, out.width = "100%"}
+# Shared editable variables and helper functions. This chunk always compares both data sets, small and big.
+# Folders for timing logs and output paths
+speed_logs_small <- "Results/small/Genotypes_results/old/Identified_ASP_genotypes"
+speed_logs_big <- "Results/big/Genotypes_results/old/Identified_ASP_genotypes"
+out_dir_speed_opt_small <- "Results/small/Graphics/Speed_Optimization_Analysis"
+out_dir_speed_opt <- "Results/big/Graphics/Speed_Optimization_Analysis"
+dir.create(out_dir_speed_opt_small, recursive = TRUE, showWarnings = FALSE)
+dir.create(out_dir_speed_opt, recursive = TRUE, showWarnings = FALSE)
+
+locus_row_regex <- "^\\[locus \\d+/\\d+\\] (\\S+) \\((\\d+) reads" #[locus 3/33] BICF2G630340139, group 1 for loci, group 2 for reads
+
+#labels
+speed_label <- function(before, after) {
+  ifelse(after <= before, sprintf("%.1fx faster", before / after), sprintf("%.1fx slower", after / before))
+}
+
+# Plot function for both dataset using total time and added arrows
+plot_total_time_f <- function(totals, palette, from_bar, to_bar, title, show_minutes) {
+  y_max <- max(totals$total_seconds)
+  label_gap <- y_max * 0.08 # space between a bar and the start of its arrow
+  x_inset <- 0.32 # keeps the arrows off the bars
+
+  bars <- totals %>%
+    mutate(label = if (show_minutes) sprintf("%.0fs\n(%.1f min)", total_seconds, total_seconds / 60) else sprintf("%.1fs", total_seconds))
+
+  # Arrows spacing and positioning
+  arrows <- tibble(x = from_bar + x_inset,
+                   xend = to_bar - x_inset,
+                   y = totals$total_seconds[from_bar] + label_gap,
+                   yend = totals$total_seconds[to_bar] + label_gap,
+                   label = speed_label(totals$total_seconds[from_bar], totals$total_seconds[to_bar])) %>%
+    mutate(x_mid = (x + xend) / 2, 
+           y_label = (y + yend) / 2 + y_max * 0.12)
+
+  y_top <- max(arrows$y_label, arrows$y, totals$total_seconds + label_gap) * 1.15 
+
+  # Plot
+  ggplot(bars, aes(x = version, y = total_seconds, fill = version)) +
+    geom_col(width = 0.6, colour = "grey25", linewidth = 0.3) +
+    geom_text(aes(label = label), vjust = -0.3, fontface = "bold", size = 4, colour = "#0b0b0b") +
+    geom_curve(data = arrows, aes(x = x, y = y, xend = xend, yend = yend), inherit.aes = FALSE,
+               curvature = -0.3, linewidth = 0.5, colour = "#52514e",
+               arrow = arrow(length = unit(0.16, "cm"), type = "closed")) +
+    geom_label(data = arrows, aes(x = x_mid, y = y_label, label = label), inherit.aes = FALSE,
+               size = 3.3, fontface = "bold", colour = "#0b0b0b",
+               fill = "#fcfcfb", linewidth = 0, label.padding = unit(0.12, "lines")) +
+    scale_fill_manual(values = palette, guide = "none") +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.06)), limits = c(0, y_top)) +
+    labs(title = title,
+         subtitle = "\n* v1 is not a real speed comparison - does less work per read.",
+         x = NULL,
+         y = "Total pipeline time (seconds)") +
+    theme_minimal(base_family = plot_font, base_size = 12) +
+    theme(plot.title = element_text(face = "bold", colour = "#0b0b0b", margin = margin(b = 4)),
+          plot.subtitle = element_text(size = 8.5, colour = "#52514e"),
+          plot.margin = margin(t = 14, r = 14, b = 8, l = 8),
+          panel.grid = element_blank(),
+          axis.line.x = element_line(colour = "#c3c2b7", linewidth = 0.4),
+          axis.ticks = element_blank(),
+          axis.text.x = element_text(colour = "#52514e"),
+          axis.text.y = element_text(colour = "#898781"),
+          axis.title.y = element_text(colour = "#52514e"))
+}
+
+# Plot for small dataset
+v1_naive_small <- read_tsv(file.path(speed_logs_small, "v1_old_naive_genotyper/very_first_timing_log.tsv"), show_col_types = FALSE)
+v2_Qscores_small <- read_tsv(file.path(speed_logs_small, "v2_quality_scoring_before_restructuring/original_fixed_timing_log.tsv"), show_col_types = FALSE)
+v3_Qscore_restructured_small <- read_tsv(file.path(speed_logs_small, "v3_quality_scoring_restructured/restructured_timing_log_parallel.tsv"), show_col_types = FALSE)
+v4_parallel_4pwalign_small <- read_tsv(file.path(speed_logs_small, "v4_quality_scoring_parallel_4pwalign/restructured_timing_log_parallel.tsv"), show_col_types = FALSE)
+v5_parallel_2pwalign_small <- read_tsv(file.path(speed_logs_small, "v5_quality_scoring_parallel_2pwalign/restructured_timing_log_parallel.tsv"), show_col_types = FALSE)
+v6_final_anchored_small <- read_tsv(file.path(speed_logs_small, "v11_3anchors_agreementTRUE_strand_check/restructured_timing_log_parallel.tsv"), show_col_types = FALSE)
+
+# Total time needed for finishing the analysis
+v1_total_small <- filter(v1_naive_small, step == "TOTAL PIPELINE")$seconds
+v2_total_small <- sum(filter(v2_Qscores_small, grepl(locus_row_regex, step))$seconds) # no total pipeline log, summing over the steps
+v3_total_small <- filter(v3_Qscore_restructured_small, step == "TOTAL PIPELINE")$seconds
+v4_total_small <- filter(v4_parallel_4pwalign_small, step == "TOTAL PIPELINE")$seconds
+v5_total_small <- filter(v5_parallel_2pwalign_small, step == "TOTAL PIPELINE")$seconds
+v6_total_small <- filter(v6_final_anchored_small, step == "TOTAL PIPELINE")$seconds
+v5_scoring_small <- sum(filter(v5_parallel_2pwalign_small, grepl(locus_row_regex, step))$seconds) # again summed over loci
+v6_scoring_small <- sum(filter(v6_final_anchored_small, grepl(locus_row_regex, step))$seconds)
+
+# Bar colours in order
+palette_small <- c(
+  "First naive function (v1)\n(no QPhred scores)*" = "#72874E",
+  "QPhred aware\n function (v2)" = "#AB5D26",
+  "Restructured v2" = "#C3722A",
+  "Restructured v2 +\n parallel (7 cores)" = "#E6DAB9",
+  "Direction-aware\n2x pairwiseAlignment" = "#E1C473",
+  "Final: anchors +\nposition & strand checks" = "#2C5724")
+
+totals_small <- tibble(version = factor(names(palette_small), levels = names(palette_small)),
+                       total_seconds = c(v1_total_small, v2_total_small, v3_total_small, v4_total_small, v5_total_small, v6_total_small))
+
+# arrows from 2 to 3 and 3 to 4 and so on.
+plot_total_time_small <- plot_total_time_f(totals_small, palette_small, from_bar = c(2, 3, 5), to_bar = c(3, 4, 6),
+                                           title = "Small dataset: total pipeline runtime across every version", show_minutes = FALSE)
+print(plot_total_time_small)
+ggsave(file.path(out_dir_speed_opt_small, "small_dataset_total.png"), plot_total_time_small, width = 12, height = 6, dpi = 300, bg = "white")
+ggsave(file.path(out_dir_speed_opt_small, "small_dataset_total.pdf"), plot_total_time_small, width = 12, height = 6, device = cairo_pdf)
+
+kable(transmute(totals_small, version = gsub("\n", " ", version), seconds = round(total_seconds, 1),
+                faster_than_v2 = round(v2_total_small / total_seconds, 2)))
+
+# Plot for the big dataset
+v1_naive_big <- read_tsv(file.path(speed_logs_big, "v1_old_naive_genotyper/very_first_timing_log.tsv"), show_col_types = FALSE)
+v2_Qscores_big <- read_tsv(file.path(speed_logs_big, "v2_quality_scoring_before_restructuring/original_fixed_timing_log.tsv"), show_col_types = FALSE)
+v4_parallel_4pwalign_big <- read_tsv(file.path(speed_logs_big, "v4_quality_scoring_parallel_4pwalign/restructured_timing_log_parallel.tsv"), show_col_types = FALSE)
+v5_parallel_2pwalign_7cores_big <- read_tsv(file.path(speed_logs_big, "v5_quality_scoring_parallel_2pwalign_7cores/restructured_timing_log_parallel.tsv"), show_col_types = FALSE)
+v6_final_big <- read_tsv(file.path(speed_logs_big, "v11_3anchors_agreementTRUE_strand_check/restructured_timing_log_parallel.tsv"), show_col_types = FALSE)
+
+# these five names are used by the spiral chunk
+v1_naive_pipeline_total_big <- filter(v1_naive_big, step == "TOTAL PIPELINE")$seconds
+v2_Qscores_pipeline_total_big <- filter(v2_Qscores_big, step == "TOTAL PIPELINE")$seconds
+v4_parallel_4pwalign_pipeline_total_big <- filter(v4_parallel_4pwalign_big, step == "TOTAL PIPELINE")$seconds
+v5_pipeline_total_big <- filter(v5_parallel_2pwalign_7cores_big, step == "TOTAL PIPELINE")$seconds
+v6_pipeline_total_big <- filter(v6_final_big, step == "TOTAL PIPELINE")$seconds
+
+# number of reads in the big dataset
+n_reads_total_big <- sum(as.integer(sub(paste0(locus_row_regex, ".*"), "\\2", grep(locus_row_regex, v4_parallel_4pwalign_big$step, value = TRUE))))
+
+palette_big <- c(
+  "First naive function (v1)\n(no QPhred scores)*" = "#72874E",
+  "QPhred aware\n function (v2)" = "#AB5D26",
+  "Restructured v2 +\n parallel (3 cores)" = "#E6DAB9",
+  "Direction-aware\n2x pairwiseAlignment (7 cores)" = "#E1C473",
+  "Final: anchors +\nposition & strand checks" = "#2C5724")
+
+totals_big <- tibble(version = factor(names(palette_big), levels = names(palette_big)),
+                     total_seconds = c(v1_naive_pipeline_total_big, v2_Qscores_pipeline_total_big, v4_parallel_4pwalign_pipeline_total_big,
+                                       v5_pipeline_total_big, v6_pipeline_total_big)) %>%
+  mutate(reads_per_sec = n_reads_total_big / total_seconds)
+
+# arrows similar as before
+plot_total_time_big <- plot_total_time_f(totals_big, palette_big, from_bar = c(2, 3, 4), to_bar = c(3, 4, 5),
+                                         title = sprintf("Big dataset (%s reads): total pipeline time", format(n_reads_total_big, big.mark = ",")),
+                                         show_minutes = TRUE)
+print(plot_total_time_big)
+ggsave(file.path(out_dir_speed_opt, "bigdataset_total_pipeline.png"), plot_total_time_big, width = 12, height = 6, dpi = 300, bg = "white")
+ggsave(file.path(out_dir_speed_opt, "bigdataset_total_pipeline.pdf"), plot_total_time_big, width = 12, height = 6, device = cairo_pdf)
+
+# reads processed per second
+plot_reads_per_second_big <- ggplot(totals_big, aes(x = version, y = reads_per_sec, fill = version)) +
+  geom_col(width = 0.5, colour = "grey25", linewidth = 0.3) +
+  geom_text(aes(label = sprintf("%.0f reads/sec", reads_per_sec)), vjust = -0.5, fontface = "bold") +
+  scale_fill_manual(values = palette_big, guide = "none") +
+  expand_limits(y = max(totals_big$reads_per_sec) * 1.15) +
+  labs(title = "Big dataset: throughput (reads processed per second)",
+       subtitle = "* v1's higher throughput reflects doing less per read, not a faster algorithm - see total-time chart",
+       x = NULL,
+       y = "Reads / second") +
+  theme_minimal(base_family = plot_font, base_size = 12) +
+  theme(plot.title = element_text(face = "bold"), plot.subtitle = element_text(size = 9), panel.grid.minor = element_blank())
+
+print(plot_reads_per_second_big)
+ggsave(file.path(out_dir_speed_opt, "bigdataset_throughput.png"), plot_reads_per_second_big, width = 12, height = 6, dpi = 300, bg = "white")
+ggsave(file.path(out_dir_speed_opt, "bigdataset_throughput.pdf"), plot_reads_per_second_big, width = 12, height = 6, device = cairo_pdf)
+
+# time of each part of the final run and banners
+phase_df_big <- v6_final_big %>%
+  filter(grepl("^Part [123] total", step)) %>%
+  mutate(phase = substr(step, 1, 6), pct = 100 * seconds / v6_pipeline_total_big)
+
+kable(transmute(totals_big, version = gsub("\n", " ", version), seconds = round(total_seconds), minutes = round(total_seconds / 60, 1),
+                reads_per_sec = round(reads_per_sec), faster_than_v2 = round(v2_Qscores_pipeline_total_big / total_seconds, 1)))
+
+cat(sprintf("  v2 -> v4: %s | v5 -> final: %s | v2 -> final: %s\n",
+            speed_label(v2_Qscores_pipeline_total_big, v4_parallel_4pwalign_pipeline_total_big),
+            speed_label(v5_pipeline_total_big, v6_pipeline_total_big),
+            speed_label(v2_Qscores_pipeline_total_big, v6_pipeline_total_big)))
+cat(sprintf("  Phase breakdown (final run): %s\n",
+            paste(sprintf("%s = %.1fs (%.1f%%)", phase_df_big$phase, phase_df_big$seconds, phase_df_big$pct), collapse = ", ")))
+cat(" * v1 is not an apples-to-apples speed comparison - see plot subtitles.\n")
+```
+
+## Du Bois plots for speed optimization analysis and SNP read base quality 
+This chunk contains plots for SNP read base qaulity and speed optimization using Du Bois data visualization as refernce for the plot with changed colours. Code for this was built by Pat Schloss (Riffomonas), I just used my data (https://riffomonas.org/code_club/2025-02-17-panel-27).
+
+```{r Du_Bois_Plots_for_Speed_Optimization_Analysis_and_SNP_Quality, results = "asis", fig.width = 6.5, fig.height = 7, out.width = "55%"}
+# Du Bois plate 27 style pies: quality of the read base on the SNP. First pie plot showing SNP read base quality of the correctly and wrongly called reads in HM pairs. Second plot shows SNP read base quality of the rarer allele in reads from HM (error or noise) and HT (actual real second allele just lower freq).
+
+# Settings
+out_dir_Dubois <- file.path(graphics_dir, "Dubois_plots")
+dir.create(out_dir_Dubois, recursive = TRUE, showWarnings = FALSE)
+pie_out_right_wrong <- file.path(out_dir_Dubois, sprintf("%sdataset_dubois_snp_quality_pie.png", dataset_name))
+pie_out_rare_allele <- file.path(out_dir_Dubois, sprintf("%sdataset_dubois_minority_allele_quality_pie.png", dataset_name))
+
+# Quality groups, q4 is best
+pie_categories <- c("q4", "q3", "q2", "q1")
+pie_fills <- c(q4 = "#A4B591FF", q3 = "#E1C473FF", q2 = "#C3722AFF", q1 = "#A12A19FF")
+pie_legend <- tribble(
+  ~x_dot, ~x_label, ~y, ~category, ~label,
+  -0.90, -0.84, 0.12, "q4", "Q30 AND OVER",
+  -0.90, -0.84, -0.12, "q3", "Q20 TO Q29",
+   0.90, 0.84, 0.12, "q2", "Q10 TO Q19",
+   0.90, 0.84, -0.12, "q1", "UNDER Q10"
+) #593722FF, #834D24FF, #AB5D26FF, #C3722AFF, #E1C473FF, #E6DAB9FF, #A4B591FF, #55804DFF, #416C39FF, #2C5724FF
+
+# Data preparation
+pie_reference <- ref %>% 
+  filter(!is.na(genotype)) %>%
+  transmute(barcode = sample,
+            locus,
+            ref_allele = substr(genotype, 1, 1), #separates genotype
+            zygosity = ifelse(substr(genotype, 1, 1) == substr(genotype, 2, 2), "hom", "het")) # labels for genotypes
+
+pie_reads <- read_tsv(asp_reads_path, col_select = c(barcode, locus, called_allele, snp_position_quality),
+                      col_types = cols(barcode = "c", locus = "c", called_allele = "c", snp_position_quality = "d")) %>%
+  filter(!is.na(called_allele)) %>% # counted reads only
+  inner_join(pie_reference, by = c("barcode", "locus")) %>% # pairs with a ref genotype
+  mutate(category = as.character(cut(snp_position_quality, c(-Inf, 9, 19, 29, Inf), #puts each one in a quality group
+                                     labels = c("q1", "q2", "q3", "q4"))))
+
+# The drawing function (same layout for both pies)
+pie_draw <- function(reads, top_label, bottom_label, title, caption) { # It takes reads for one pie chart already labeled with top or bottom
+  counts <- reads %>%
+    count(half, category) %>% # Counts reads per half and quality category
+    complete(half = c("top", "bottom"), category = pie_categories, fill = list(n = 0)) %>% # Adds missing combinations
+    group_by(half) %>%
+    mutate(percent = 100 * n / sum(n), half_n = sum(n)) %>% # Creates %
+    ungroup()
+print(kable(counts, digits = 1))
+
+  slices <- counts %>%
+    select(half, category, percent) %>%
+    bind_rows(tibble(half = c("top", "bottom"), category = "blank", percent = 60)) %>% # Creates two invisible blank slices
+    mutate(slice = factor(paste(half, category, sep = "_"), levels = c("top_blank", paste0("top_", rev(pie_categories)),
+                                                                       "bottom_blank", paste0("bottom_", rev(pie_categories))))) %>% 
+    arrange(slice) %>%
+    mutate(theta = 2 * pi * percent / sum(percent), # Eeach slice angle in radians
+           final_theta = cumsum(theta) - first(theta) / 2, # Turns the pie back by half
+           initial_theta = lag(final_theta, default = 0)) %>%
+    filter(category != "blank", percent > 0) # Removes blanks
+
+  # The outline of each slice: center, then along the arc, back to the center
+  wedges <- slices %>%
+      mutate(points = Map(function(from, to) {
+      angles <- seq(from, to, length.out = 200) # Gives the function a starting and ending angle and 200 in between for a smooth arc
+      tibble(x = c(0, cos(angles), 0), y = c(0, sin(angles), 0))
+    }, initial_theta, final_theta)) %>%
+    unnest(points)
+
+  labels <- slices %>%
+    mutate(mid = (initial_theta + final_theta) / 2,
+           radius = ifelse(percent >= 10, 0.62, 0.86), # for small slices label is further out
+           size = ifelse(percent >= 10, 11, 8),
+           x = radius * cos(mid),
+           y = radius * sin(mid),
+           text = sprintf("%.0f%%", percent))
+
+  n_top <- counts$half_n[counts$half == "top"][1]
+  n_bottom <- counts$half_n[counts$half == "bottom"][1]
+
+  ggplot(wedges, aes(x, y, group = slice, fill = category)) +
+    geom_polygon(show.legend = FALSE, colour = "black", linewidth = 0.1) +
+    geom_text(data = labels, aes(x, y, label = text, size = size / .pt), inherit.aes = FALSE, family = plot_font) +
+    geom_point(data = pie_legend, aes(x_dot, y, fill = category), inherit.aes = FALSE,
+               shape = 21, size = 7, stroke = 0.25, show.legend = FALSE) +
+    geom_text(data = pie_legend, aes(x_label, y, label = label, hjust = ifelse(x_label < 0, 0, 1)), inherit.aes = FALSE,
+              family = plot_font, size = 6.5 / .pt) +
+    annotate("text", x = 0, y = c(1.1, -1.1), family = plot_font, size = 8 / .pt,
+             label = c(sprintf(top_label, format(n_top, big.mark = ",")),
+                       sprintf(bottom_label, format(n_bottom, big.mark = ",")))) +
+    coord_equal(xlim = c(-1, 1), ylim = c(-1, 1), expand = FALSE, clip = "off") +
+    scale_fill_manual(values = pie_fills) +
+    scale_size_identity() +
+    labs(title = title, caption = caption, x = NULL, y = NULL) +
+    theme(plot.title = element_text(family = plot_font, size = 12, hjust = 0.5, margin = margin(t = 20, b = 35)),
+          plot.caption = element_text(family = plot_font, size = 6, hjust = 0.5, margin = margin(t = 30)),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          panel.grid = element_blank(),
+          panel.background = element_rect(fill = "white", colour = NA),
+          plot.background = element_rect(fill = "white", colour = NA),
+          plot.margin = margin(b = 30, l = 80, r = 80))
+}
+
+
+# 1. Pie plot for right vs wrong reads in HM pairs
+pie_right_wrong_reads <- pie_reads %>%
+  filter(zygosity == "hom", !is.na(category)) %>%
+  mutate(half = ifelse(called_allele == ref_allele, "top", "bottom"))
+
+pie_fig_right_wrong <- pie_draw(
+  pie_right_wrong_reads,
+  top_label = "CORRECTLY CALLED READS (%s).",
+  bottom_label = "WRONGLY CALLED READS (%s).",
+  title = "READ BASE QUALITY ON THE SNP.",
+  caption = sprintf("%s DATASET; READS FROM SAMPLE-LOCUS PAIRS THAT ARE HOMOZYGOUS IN THE REFERENCE.", toupper(dataset_name)))
+
+print(pie_fig_right_wrong)
+ggsave(pie_out_right_wrong, pie_fig_right_wrong, width = 6.5, height = 7, dpi = 300)
+ggsave(sub("\\.png$", ".pdf", pie_out_right_wrong), pie_fig_right_wrong, width = 6.5, height = 7, device = cairo_pdf)
+
+# 2. Pie plot, reads of the rarer allele, HM (miscalls or noise) vs HT pairs
+pie_rare_allele_reads <- pie_reads %>%
+  add_count(barcode, locus, called_allele, name = "allele_n") %>%
+  group_by(barcode, locus) %>%
+  filter(called_allele != called_allele[which.max(allele_n)]) %>%
+  ungroup() %>%
+  filter(!is.na(category)) %>%
+  mutate(half = ifelse(zygosity == "hom", "top", "bottom"))
+
+pie_fig_rare_allele <- pie_draw(
+  pie_rare_allele_reads,
+  top_label = "RARER ALLELE IN HOMOZYGOTES: ERRORS (%s READS).",
+  bottom_label = "RARER ALLELE IN HETEROZYGOTES: REAL SECOND ALLELE (%s READS).",
+  title = "THE RARER ALLELE READ BASE\nQUALITY ON THE SNP.",
+  caption = sprintf("%s DATASET; RARER ALLELE = THE ALLELE FEWER READS CALL IN THAT SAMPLE AND LOCUS.", toupper(dataset_name)))
+
+print(pie_fig_rare_allele)
+ggsave(pie_out_rare_allele, pie_fig_rare_allele, width = 6.5, height = 7, dpi = 300)
+ggsave(sub("\\.png$", ".pdf", pie_out_rare_allele), pie_fig_rare_allele, width = 6.5, height = 7, device = cairo_pdf)
+
+# 3. Plot,Du Bois spiral (plate 25 style) for the big-dataset speed optimization. Each band one total pipeline time, lentgh proportional
+spi_out_dir <- "Results/big/Graphics/Dubois_plots"
+dir.create(spi_out_dir, recursive = TRUE, showWarnings = FALSE)
+
+# total pipeline time per version in seconds
+stopifnot(exists("v1_naive_pipeline_total_big"), exists("v2_Qscores_pipeline_total_big"),
+          exists("v4_parallel_4pwalign_pipeline_total_big"), exists("v5_pipeline_total_big"),
+          exists("v6_pipeline_total_big"))
+
+spi_timings <- tribble(
+  ~version, ~seconds,
+  "NAIVE, NOT QUALITY AWARE (V1)*", v1_naive_pipeline_total_big,
+  "QUALITY-AWARE (V2)", v2_Qscores_pipeline_total_big,
+  "RESTRUCTURED - 3 CORES (V4)", v4_parallel_4pwalign_pipeline_total_big,
+  "DIRECTION-AWARE - 7 CORES (V5)", v5_pipeline_total_big,
+  "FINAL - 5 CORES (V11)", v6_pipeline_total_big) %>%
+  arrange(seconds) 
+
+# centre number: quality-aware V2 time/final time (V1 not counted)
+spi_speedup <- v2_Qscores_pipeline_total_big / v6_pipeline_total_big
+
+spi_fills <- setNames(c("#2C5724FF", "#72874EFF", "#E6DAB9FF", "#E1C473FF", "#AB5D26FF"), spi_timings$version)
+ #593722FF, #834D24FF, #AB5D26FF, #C3722AFF, #E1C473FF, #E6DAB9FF, #A4B591FF, #55804DFF, #416C39FF, #2C5724FF
+
+spi_start_radius <- 15
+spi_end_radius <- 9
+spi_thickness <- 0.6
+spi_min_length <- 0.35 # the smallest band would be almost invisible, minimum lentgth
+
+# One row per version, position and label
+spi_bands <- spi_timings %>%
+  mutate(fraction = seconds / max(seconds), # the slowest version = 1 = the whole spiral
+         offset = spi_thickness * (row_number() - 1), # each band sits one thickness further in
+         label_y = spi_start_radius - offset - spi_thickness / 2, 
+         time_label = case_when(seconds >= 3600 ~ sprintf("%.1f HOURS", seconds / 3600),
+                                seconds >= 60 ~ sprintf("%.1f MIN", seconds / 60),
+                                TRUE ~ sprintf("%.0f SEC", seconds)),
+         version = factor(version, levels = version))
+
+# Spiral bands as polygons. Points along one spiral line, from the top (angle 9*pi/2) round to the lower left (angle 3*pi/4), with length = the distance travelled along the line so far
+spi_spiral_line <- function(from_radius, to_radius) {
+  radius <- seq(from_radius, to_radius, length.out = 2000)
+  angle <- seq(9 * pi / 2, 3 * pi / 4, length.out = 2000)
+  x <- radius * cos(angle)
+  y <- radius * sin(angle)
+  tibble(x = x, y = y, length = cumsum(c(0, sqrt(diff(x)^2 + diff(y)^2))))
+}
+
+# the full length of the outer edge of thevinnermost band (100 %)
+spi_full_length <- with(tail(spi_bands, 1),
+                        max(spi_spiral_line(spi_start_radius - offset, spi_end_radius - offset)$length))
+
+# each band = its outer edge, cut to its share of the full length, then back along its inner edge
+spi_polygons <- spi_bands %>%
+  group_by(version) %>%
+  reframe({
+    outer <- spi_spiral_line(spi_start_radius - offset, spi_end_radius - offset)
+    inner <- spi_spiral_line(spi_start_radius - offset - spi_thickness, spi_end_radius - offset - spi_thickness)
+    keep <- outer$length <= max(fraction * spi_full_length, spi_min_length)
+    tibble(x = c(outer$x[keep], rev(inner$x[keep])),
+           y = c(outer$y[keep], rev(inner$y[keep])))
+  })
+
+# Plot
+spi_fig <- ggplot(spi_polygons, aes(x, y, group = version, fill = version)) +
+  geom_polygon(colour = "black", linewidth = 0.2, show.legend = FALSE) +
+  geom_text(data = spi_bands, aes(x = -0.5, y = label_y, label = time_label), inherit.aes = FALSE,
+            family = plot_font, size = 6.5 / .pt, hjust = 1) +
+  geom_text(data = spi_bands, aes(x = -9.2, y = label_y, label = version), inherit.aes = FALSE,
+            family = plot_font, size = 6 / .pt, hjust = 1) +
+  annotate("segment", x = -9, xend = -5.2, y = spi_bands$label_y, yend = spi_bands$label_y, linewidth = 0.1) +
+  annotate("text", x = 0, y = -0.6, label = sprintf("%.0fx", spi_speedup), family = plot_font, size = 25 / .pt) +
+  annotate("text", x = 0, y = -2.0, label = "FASTER", family = plot_font, size = 9 / .pt) +
+  coord_equal(expand = FALSE, clip = "off") +
+  scale_fill_manual(values = spi_fills) +
+  labs(title = "TOTAL PIPELINE TIME OF THE ASP GENOTYPER\nON THE BIG DATASET, BY VERSION.",
+       caption = "* THE NAIVE VERSION DOES LESS WORK PER READ; NOT A DIRECT COMPARISON.\nCENTRE: QUALITY-AWARE (V2) TIME / FINAL TIME.",
+       x = NULL, y = NULL) +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank(),
+        panel.background = element_rect(fill = "white", colour = NA), 
+        plot.background = element_rect(fill = "white", colour = NA),
+        plot.title.position = "plot",
+        plot.title = element_text(family = plot_font, size = 12, hjust = 0.5, margin = margin(t = 20, b = 40)),
+        plot.caption.position = "plot",
+        plot.caption = element_text(family = plot_font, size = 6, hjust = 0.5, margin = margin(t = 30)),
+        plot.margin = margin(b = 40, l = 130, r = 30))
+
+print(spi_fig)
+ggsave(file.path(spi_out_dir, "spiral_figure.png"), spi_fig, width = 6.5, height = 7, dpi = 300)
+ggsave(file.path(spi_out_dir, "spiral_figure.pdf"), spi_fig, width = 6.5, height = 7, device = cairo_pdf)
+```
+
+
+
+<details><summary>Settings used for this run</summary>
+
+```{r settings_table, echo = FALSE}
+kable(settings_used, row.names = FALSE, col.names = c("Setting", "Value"))
+```
+
+</details>
+
+
+
+## Reproducibility
+
+<details><summary>Session info</summary>
+
+```{r session_info}
+sessionInfo()
+```
+
+</details>
