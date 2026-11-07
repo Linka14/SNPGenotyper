@@ -1,0 +1,133 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+description: >
+  Settings for the wolf-dog hybrid Nanopore SNP genotyping pipeline (config/config.yaml).
+  Snakemake checks config.yaml against this file before anything runs, so any mistakes
+  typos or out of range values are detected immediately.
+type: object
+additionalProperties: false
+required: [shared_settings, settings_01_demultiplexing, settings_03_minimap2, settings_04_genotyping,
+           settings_05_bayesian, settings_07_failed_genotypes, settings_08_ancestry_validation, workflow_settings]
+
+properties:
+
+  shared_settings:
+    type: object
+    additionalProperties: false
+    required: [dataset_name, n_barcodes, dorado_bin_folder, obitools_bin_folder, minimap2_bin_folder, samtools_bin_folder,
+               barcode_map_path, primer_panel_path, reference_path, minimum_required_depth, HT_min_frequence, min_snp_quality,
+               n_cores, input_type, use_anchors, anchor_length, probe_type, threshold_type, min_score_fraction, error_rate,
+               strand_flag_prob, expected_minor_fraction, strand_downgrade]
+    properties:
+      dataset_name: {type: string, enum: [small, big], description: "Dataset name also used in the output folder names"}
+      n_barcodes: {type: integer, minimum: 1, description: "Any number of barcodes used"}
+      dorado_bin_folder: {type: string, description: "Folder with the dorado program or empty string "}
+      obitools_bin_folder: {type: string, description: "Folder with the ObiTools4 programs or empty string "}
+      minimap2_bin_folder: {type: string, description: "Folder with minimap2 or empty string "}
+      samtools_bin_folder: {type: string, description: "Folder with samtools or empty string "}
+      barcode_map_path: {type: string, description: "Sample to barcode table"}
+      primer_panel_path: {type: string, description: "Primer panel (.xlsx)"}
+      reference_path: {type: string, description: "SNP reference sequences (.fa)"}
+      minimum_required_depth: {type: integer, minimum: 1, description: "Minimum reads per sample locus pair for a call"}
+      HT_min_frequence: {type: number, minimum: 0, maximum: 0.5, description: "MAF needed for a HT"}
+      min_snp_quality: {type: integer, minimum: 0, description: "Minimum Phred quality of the SNP base, 0 switches it off"}
+      n_cores: {type: integer, minimum: 1, description: "Number of cores for ASP scoring, Stan chains and downsampling"}
+      input_type: {type: string, enum: [padded, unpadded]}
+      use_anchors: {type: boolean}
+      anchor_length: {type: integer, minimum: 1, maximum: 5}
+      probe_type: {type: string, enum: [asp_primers, reference]}
+      threshold_type: {type: string, enum: [fraction, errors]}
+      min_score_fraction: {type: number, exclusiveMinimum: 0, maximum: 1}
+      error_rate: {type: number, minimum: 0, maximum: 1}
+      strand_flag_prob: {type: number, exclusiveMinimum: 0, exclusiveMaximum: 1}
+      expected_minor_fraction: {type: number, exclusiveMinimum: 0, maximum: 0.5}
+      strand_downgrade: {type: boolean}
+
+  settings_01_demultiplexing:
+    type: object
+    additionalProperties: false
+    required: [kit_name, ngsfilter_path]
+    properties:
+      kit_name: {type: string, description: "Nanopore barcoding kit for dorado demux"}
+      ngsfilter_path: {type: string, description: "NGSfilter file for obimultiplex"}
+
+  settings_03_minimap2:
+    type: object
+    additionalProperties: false
+    required: [pad, snp_position, minimum_mapping_quality_threshold]
+    properties:
+      pad: {type: integer, minimum: 0}
+      snp_position: {type: integer, minimum: 1}
+      minimum_mapping_quality_threshold: {type: integer, minimum: 0}
+
+  settings_04_genotyping:
+    type: object
+    additionalProperties: false
+    required: [primer_quality, gap_opening, gap_extension, min_errors, max_mismatches]
+    properties:
+      primer_quality: {type: integer, minimum: 0, maximum: 93}
+      gap_opening: {type: number, minimum: 0}
+      gap_extension: {type: number, minimum: 0}
+      min_errors: {type: integer, minimum: 0}
+      max_mismatches: {type: number, minimum: 0, description: ".inf switches it off"}
+
+  settings_05_bayesian:
+    type: object
+    additionalProperties: false
+    required: [prior_type, prior_het_share, prior_population, prior_floor, ancestry_prior_shape, phi_hom_structure,
+               stan_iter, stan_warmup, stan_chains, stan_adapt_delta, max_error,
+               read_depths_to_test, draws_per_depth, minimum_reads_for_truth_pair, bootstrap_rounds]
+    properties:
+      prior_type: {type: string, enum: [flat, het_share, hwe, ancestry]}
+      prior_het_share: {type: number, minimum: 0, maximum: 1}
+      prior_population: {type: string, enum: [FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT, FreqWOLF_IB, FreqDOG]}
+      prior_floor: {type: number, exclusiveMinimum: 0, maximum: 0.5}
+      ancestry_prior_shape: {type: number, exclusiveMinimum: 0}
+      phi_hom_structure: {type: string, enum: [shared, locus, sample, locus_sample]}
+      stan_iter: {type: integer, minimum: 1}
+      stan_warmup: {type: integer, minimum: 1}
+      stan_chains: {type: integer, minimum: 1}
+      stan_adapt_delta: {type: number, exclusiveMinimum: 0, exclusiveMaximum: 1}
+      max_error: {type: number, exclusiveMinimum: 0, maximum: 1}
+      read_depths_to_test: {type: array, minItems: 1, items: {type: integer, minimum: 1}}
+      draws_per_depth: {type: integer, minimum: 1}
+      minimum_reads_for_truth_pair: {type: integer, minimum: 1}
+      bootstrap_rounds: {type: integer, minimum: 1}
+
+  settings_07_failed_genotypes:
+    type: object
+    additionalProperties: false
+    required: [failed_genotypes_source, failed_max_reads_plotted]
+    properties:
+      failed_genotypes_source: {type: string, enum: [asp_genotypes, bayes_genotypes]}
+      failed_max_reads_plotted: {type: integer, minimum: 1}
+
+  settings_08_ancestry_validation:
+    type: object
+    additionalProperties: false
+    required: [genotype_prior_type, gq_cutoff, reference_source, reference_ped_path, reference_map_path,
+               reference_wolf_groups, reference_dog_groups, wolf_frequency_column, dog_frequency_column,
+               n_reference_wolves, n_reference_dogs, n_simulated_per_hybrid_class, simulation_seed, structure_runs]
+    properties:
+      genotype_prior_type: {type: string, enum: [flat, het_share, hwe, ancestry]}
+      gq_cutoff: {type: number, minimum: 0}
+      reference_source: {type: string, enum: [real, simulated]}
+      reference_ped_path: {type: string}
+      reference_map_path: {type: string}
+      reference_wolf_groups: {type: array, minItems: 1, items: {type: string}}
+      reference_dog_groups: {type: array, minItems: 1, items: {type: string}}
+      wolf_frequency_column: {type: string, enum: [FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT, FreqWOLF_IB]}
+      dog_frequency_column: {type: string}
+      n_reference_wolves: {type: integer, minimum: 100, description: "at least 100, 08a uses 100 of them as NewHybrids references"}
+      n_reference_dogs: {type: integer, minimum: 100, description: "at least 100, 08a uses 100 of them as NewHybrids references"}
+      n_simulated_per_hybrid_class: {type: integer, minimum: 100, description: "at least 100, the NewHybrids power analysis uses 100 per class"}
+      simulation_seed: {type: integer}
+      structure_runs: {type: integer, minimum: 1}
+
+  workflow_settings:
+    type: object
+    additionalProperties: false
+    required: [timer_command, newhybrids_command, structure_command]
+    properties:
+      timer_command: {type: string, description: "/usr/bin/time -l on macOS, -v on Linux, empty switches it off"}
+      newhybrids_command: {type: string}
+      structure_command: {type: string}
