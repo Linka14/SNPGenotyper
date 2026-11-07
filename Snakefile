@@ -27,6 +27,7 @@ unidentified_fastqs = [f"{demultiplexed_folder}/Unidentified_sample_sequences_Ob
 padded_fastqs = [f"{demultiplexed_folder}/Identified_padded_sample_sequences/barcode{barcode}_padded.fastq" for barcode in barcode_numbers]
 minimap2_folder = f"Results/{dataset_name}/Genotypes_results/MiniMap2_genotypes"
 locus_summary = f"Results/{dataset_name}/Graphics/Demultiplexing_and_Filtration_Visualization/locus_indel_homopolymer_summary.tsv"
+
 ### Stage 04 prep: reads different input fastq files based on input_type setting, those are either "padded" or "unpadded" reads.
 asp_input_fastqs = padded_fastqs if config["shared_settings"]["input_type"] == "padded" else identified_fastqs
 
@@ -37,11 +38,15 @@ run_names = subprocess.run(["Rscript", "-e",
     'run_names <- build_run_names(s$input_type, s$use_anchors, s$anchor_length, s$threshold_type, s$error_rate, s$min_score_fraction, '
     's$prior_type, s$prior_het_share, s$prior_population, s$prior_floor, probe_type = s$probe_type, '
     'ancestry_prior_shape = s$ancestry_prior_shape, phi_hom_structure = s$phi_hom_structure); '
-    'cat(run_names$asp_run_name, run_names$bayes_run_name, run_names$bayes_settings_label, sep = "\\n")'],
+    'genotype_run_names <- build_run_names(s$input_type, s$use_anchors, s$anchor_length, s$threshold_type, s$error_rate, s$min_score_fraction, '
+    'config$settings_08_ancestry_validation$genotype_prior_type, s$prior_het_share, s$prior_population, s$prior_floor, probe_type = s$probe_type, '
+    'ancestry_prior_shape = s$ancestry_prior_shape, phi_hom_structure = s$phi_hom_structure); '
+    'cat(run_names$asp_run_name, run_names$bayes_run_name, run_names$bayes_settings_label, '
+    'genotype_run_names$bayes_run_name, genotype_run_names$bayes_settings_label, sep = "\\n")'],
     capture_output = True, text = True, check = True).stdout
     
 # Splits the names to each variable    
-asp_run_name, bayes_run_name, bayes_settings_label = run_names.strip().split("\n")
+asp_run_name, bayes_run_name, bayes_settings_label, genotype_bayes_run_name, genotype_settings_label = run_names.strip().split("\n")
 asp_folder = f"Results/{dataset_name}/Genotypes_results/{asp_run_name}"
 bayes_folder = f"Results/{dataset_name}/Genotypes_results/{bayes_run_name}"
 
@@ -51,19 +56,30 @@ downsampling_folder = (f"Results/{dataset_name}/Graphics/STAN_Hierarchical/{baye
                        f"{'_sdown' if config['shared_settings']['strand_downgrade'] else '_sflag'}"
                        f"_r{settings_05['minimum_reads_for_truth_pair']}_d{max(settings_05['read_depths_to_test'])}_n{settings_05['draws_per_depth']}")
                        
-# Checking which setting (genotypes table from which specific method to check) is set in config.yaml, based on that it chooses the
+# Stage 07, Checking which setting (genotypes table from which specific method to check) is set in config.yaml, based on that it chooses the
 # input and ouput folder
 failed_from_asp = config["settings_07_failed_genotypes"]["failed_genotypes_source"] == "asp_genotypes"
 failed_genotypes_table = (f"{asp_folder}/all_barcodes_asp_genotypes.tsv" if failed_from_asp
                           else f"{bayes_folder}/all_barcodes_base_mixture_genotypes_hierarchical.tsv")
 failed_folder = f"Results/{dataset_name}/Graphics/Failed_Genotypes_Analysis/{asp_run_name if failed_from_asp else bayes_run_name}"
 
+# Stage 08: the genotype run (flat prior) used by the ancestry methods, and the folders of 08a, NewHybrids and STRUCTURE (same as ancestry_out_dir in the 08 setup chunks)
+settings_08 = config["settings_08_ancestry_validation"]
+genotype_prior_type = settings_08["genotype_prior_type"]
+genotype_bayes_folder = f"Results/{dataset_name}/Genotypes_results/{genotype_bayes_run_name}"
+ancestry_folder = f"Results/{dataset_name}/Graphics/STAN_Hierarchical/{genotype_settings_label}/Ancestry_validation_{settings_08['reference_source']}"
+newhybrids_folder = f"{ancestry_folder}/NewHybrids"
+newhybrids_power_folder = f"{ancestry_folder}/NewHybrids_power"
+structure_folder = f"{ancestry_folder}/STRUCTURE"
+structure_outputs = [f"{structure_folder}/structure_K2_run{run}_f" for run in range(1, settings_08["structure_runs"] + 1)]
+
 rule all:
     input:
         "Code/HTMLs/02_ObiTools4_Basic_Visualisation.html",
         "Code/HTMLs/03_SNP_Genotyping_MiniMap2.html",
         "Code/HTMLs/06b_Genotyping_Results.html",
-        "Code/HTMLs/07_Failed_Genotypes_Analysis.html"
+        "Code/HTMLs/07_Failed_Genotypes_Analysis.html",
+        "Code/HTMLs/08b_Ancestry_Results.html"
 
 rule stage_01a_dorado: 
     input:
@@ -184,6 +200,30 @@ rule stage_05a_bayesian:
   shell:
     "{params.timer} Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/05a_SNP_Bayesian_Genotyping.Rmd config.yaml shared_settings settings_05_bayesian 2>&1 | tee {log}"
 
+rule stage_05a_bayesian_genotype_prior:
+    input:
+        asp_reads = f"{asp_folder}/all_barcodes_asp_reads.tsv",
+        asp_genotypes = f"{asp_folder}/all_barcodes_asp_genotypes.tsv",
+        stan_model = "Stan_config/base_mixture_model_hierarchical.stan",
+        primer_panel = config["shared_settings"]["primer_panel_path"]
+    output:
+        html = f"Code/HTMLs/05a_SNP_Bayesian_Genotyping_{genotype_prior_type}.html",
+        genotypes = f"{genotype_bayes_folder}/all_barcodes_base_mixture_genotypes_hierarchical.tsv",
+        samples = f"{genotype_bayes_folder}/sample_parameters_hierarchical.tsv",
+        stan_results = f"{genotype_bayes_folder}/stan_plot_inputs.rds"
+    params:
+        settings = {**stage_settings("Code/Rmd_Stages/05a_SNP_Bayesian_Genotyping.Rmd", ["shared_settings", "settings_05_bayesian"]), "prior_type": genotype_prior_type},
+        prior = genotype_prior_type,
+        timer = config["workflow_settings"]["timer_command"]
+    threads:
+        config["shared_settings"]["n_cores"]
+    log:
+        "logs/stage_05a_genotype_prior.log"
+    benchmark:
+        "benchmarks/stage_05a_genotype_prior.tsv"
+    shell:
+        "{params.timer} Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/05a_SNP_Bayesian_Genotyping.Rmd config.yaml shared_settings settings_05_bayesian prior_type={params.prior} 2>&1 | tee {log}"
+        
 rule stage_05b_downsampling:
   input:
     stan_results = f"{bayes_folder}/stan_plot_inputs.rds",
@@ -297,3 +337,114 @@ rule stage_07_failed_genotypes:
         "benchmarks/stage_07.tsv"
     shell:
         "{params.timer} Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/07_Failed_Genotypes_Analysis.Rmd config.yaml shared_settings settings_05_bayesian settings_07_failed_genotypes 2>&1 | tee {log}"
+
+rule stage_08a_ancestry_inputs:
+    input:
+        genotypes = f"{genotype_bayes_folder}/all_barcodes_base_mixture_genotypes_hierarchical.tsv",
+        sample_parameters = f"{bayes_folder}/sample_parameters_hierarchical.tsv",
+        reference_genotypes = f"Data/Supporting_data/Reference_genotypes/genotypes_{dataset_name}.tsv",
+        reference_ped = settings_08["reference_ped_path"],
+        reference_map = settings_08["reference_map_path"],
+        primer_panel = config["shared_settings"]["primer_panel_path"],
+        functions = "Code/R_scripts/asp_functions.R"
+    output:
+        html = "Code/HTMLs/08a_Ancestry_Inputs.html",
+        ancestry_inputs = f"{ancestry_folder}/ancestry_inputs.rds",
+        newhybrids_input = f"{newhybrids_folder}/newhybrids_input.txt",
+        newhybrids_key = f"{newhybrids_folder}/newhybrids_key.tsv",
+        power_input = f"{newhybrids_power_folder}/newhybrids_power_input.txt",
+        power_key = f"{newhybrids_power_folder}/newhybrids_power_key.tsv",
+        structure_input = f"{structure_folder}/structure_input.txt",
+        mainparams = f"{structure_folder}/mainparams",
+        extraparams = f"{structure_folder}/extraparams"
+    params:
+        settings = stage_settings("Code/Rmd_Stages/08a_Ancestry_Inputs.Rmd", ["shared_settings", "settings_05_bayesian", "settings_08_ancestry_validation"]),
+        timer = config["workflow_settings"]["timer_command"]
+    log:
+        "logs/stage_08a.log"
+    benchmark:
+        "benchmarks/stage_08a.tsv"
+    shell:
+        "{params.timer} Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/08a_Ancestry_Inputs.Rmd config.yaml shared_settings settings_05_bayesian settings_08_ancestry_validation 2>&1 | tee {log}"
+
+rule newhybrids:
+    input:
+        f"{newhybrids_folder}/newhybrids_input.txt"
+    output:
+        f"{newhybrids_folder}/aa-PofZ.txt"
+    params:
+        newhybrids = config["workflow_settings"]["newhybrids_command"],
+        timer = config["workflow_settings"]["timer_command"]
+    resources:
+        heavy_jobs = 1
+    log:
+        "logs/newhybrids.log"
+    benchmark:
+        "benchmarks/newhybrids.tsv"
+
+    shell:
+          # Newhybrids exists with 1, which is now ignored, results is chekced by the files istelf
+        "(cd $(dirname {input}) && ({params.timer} {params.newhybrids} -d newhybrids_input.txt --burn-in 100000 --num-sweeps 500000 "
+        "--theta-prior Jeffreys --pi-prior Jeffreys -s 1 2 --no-gui || true) && test -s aa-PofZ.txt) > {log} 2>&1"
+
+rule newhybrids_power:
+    input:
+        f"{newhybrids_power_folder}/newhybrids_power_input.txt"
+    output:
+        f"{newhybrids_power_folder}/aa-PofZ.txt"
+    params:
+        newhybrids = config["workflow_settings"]["newhybrids_command"],
+        timer = config["workflow_settings"]["timer_command"]
+    resources:
+        heavy_jobs = 1
+    log:
+        "logs/newhybrids_power.log"
+    benchmark:
+        "benchmarks/newhybrids_power.tsv"
+    shell:
+        "(cd $(dirname {input}) && ({params.timer} {params.newhybrids} -d newhybrids_power_input.txt --burn-in 100000 --num-sweeps 500000 "
+        "--theta-prior Jeffreys --pi-prior Jeffreys -s 1 2 --no-gui || true) && test -s aa-PofZ.txt) > {log} 2>&1"
+
+rule structure_run:
+    input:
+        structure_input = f"{structure_folder}/structure_input.txt",
+        mainparams = f"{structure_folder}/mainparams",
+        extraparams = f"{structure_folder}/extraparams"
+    output:
+        f"{structure_folder}/structure_K2_run{{run}}_f"
+    wildcard_constraints:
+        run = "[0-9]+"
+    params:
+        structure = config["workflow_settings"]["structure_command"],
+        timer = config["workflow_settings"]["timer_command"]
+    resources:
+        heavy_jobs = 1
+    log:
+        "logs/structure_run{run}.log"
+    benchmark:
+        "benchmarks/structure_run{run}.tsv"
+    shell:
+        "(cd $(dirname {input.structure_input}) && {params.timer} {params.structure} -m mainparams -e extraparams -K 2 -D {wildcards.run} "
+        "-o structure_K2_run{wildcards.run}) > {log} 2>&1"
+
+rule stage_08b_ancestry_results:
+    input:
+        ancestry_inputs = f"{ancestry_folder}/ancestry_inputs.rds",
+        sample_parameters = f"{bayes_folder}/sample_parameters_hierarchical.tsv",
+        newhybrids_key = f"{newhybrids_folder}/newhybrids_key.tsv",
+        power_key = f"{newhybrids_power_folder}/newhybrids_power_key.tsv",
+        newhybrids = f"{newhybrids_folder}/aa-PofZ.txt",
+        newhybrids_power = f"{newhybrids_power_folder}/aa-PofZ.txt",
+        structure = structure_outputs,
+        functions = "Code/R_scripts/asp_functions.R"
+    output:
+        "Code/HTMLs/08b_Ancestry_Results.html"
+    params:
+        settings = stage_settings("Code/Rmd_Stages/08b_Ancestry_Results.Rmd", ["shared_settings", "settings_05_bayesian", "settings_08_ancestry_validation"]),
+        timer = config["workflow_settings"]["timer_command"]
+    log:
+        "logs/stage_08b.log"
+    benchmark:
+        "benchmarks/stage_08b.tsv"
+    shell:
+        "{params.timer} Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/08b_Ancestry_Results.Rmd config.yaml shared_settings settings_05_bayesian settings_08_ancestry_validation 2>&1 | tee {log}"

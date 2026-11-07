@@ -102,6 +102,9 @@ settings_08_ancestry_validation:
   n_reference_dogs: 186
   n_simulated_per_hybrid_class: 186 # for F1, first and second backcrosses
   simulation_seed: 1
+  structure_runs: 5 # number of independent STRUCTURE runs
   
 workflow_settings:
   timer_command: "/usr/bin/time -l" # macOS time and peak memory usage per stage, (for linux "/usr/bin/time -v")
+  newhybrids_command: "~/Tools/newhybrids/bin/OSX/newhybsng" # NewHybrids program
+  structure_command: "~/Tools/structure/structure_kernel_src/structure" # STRUCTURE program

@@ -1,5 +1,5 @@
 ---
-title: "Ancestry Analysis"
+title: "Ancestry Analysis Results"
 subtitle: "`r paste0('Dataset: ', params$dataset_name)`"
 output:
   html_document:
@@ -81,7 +81,6 @@ This last .Rmd stage checks wolf ancestry from the Bayesian model results with s
 
 ```{r setup}
 suppressMessages({
-  library(readxl)
   library(dplyr)
   library(readr)
   library(ggplot2)
@@ -116,165 +115,31 @@ run_names <- build_run_names(input_type, use_anchors, anchor_length, threshold_t
 genotype_run_names <- build_run_names(input_type, use_anchors, anchor_length, threshold_type, error_rate, min_score_fraction,
                                       genotype_prior_type, prior_het_share, prior_population, prior_floor, probe_type = probe_type,
                                       ancestry_prior_shape = ancestry_prior_shape, phi_hom_structure = phi_hom_structure) #flat run
-bayes_path <- file.path(genotypes_dir, genotype_run_names$bayes_run_name, "all_barcodes_base_mixture_genotypes_hierarchical.tsv") 
-ref_path <- file.path("Data/Supporting_data/Reference_genotypes", paste0("genotypes_", dataset_name, ".tsv")) # Genotype references
 
 # Separate output folder for real population setting
 ancestry_out_dir <- file.path(graphics_dir, "STAN_Hierarchical", genotype_run_names$bayes_settings_label, paste0("Ancestry_validation_", reference_source))
 
-dir.create(ancestry_out_dir, recursive = TRUE, showWarnings = FALSE)
-
-# Primer panel prep and importing for reference dogs and wolves
-panel_sheet <- read_excel(primer_panel_path, sheet = "Final panel", .name_repair = "minimal")
-panel_alleles <- data.frame(locus = panel_sheet[["SNP name"]],
-                            allele1 = panel_sheet[["Allele 1"]],
-                            allele2 = panel_sheet[["Allele 2"]],
-                            wolf_frequency = as.numeric(panel_sheet[[match(wolf_frequency_column, names(panel_sheet))]]),
-                            dog_frequency = as.numeric(panel_sheet[[match(dog_frequency_column, names(panel_sheet))]]))
-
 # Imported shared data
-bayes_raw <- read_tsv(bayes_path, show_col_types = FALSE)
-stan <- bayes_raw %>%
-  transmute(sample = barcode, locus, genotype = ifelse(GQ >= gq_cutoff, genotype_stan, NA), method = "Stan genotypes") # low GQ are saved as NA
-naive <- bayes_raw %>%
-  transmute(sample = barcode, locus, genotype = genotype_naive, method = "Naive genotypes")
-ref <- read_tsv(ref_path, show_col_types = FALSE) %>%
-  transmute(sample = sample_id, locus, genotype, method = "Reference genotypes")
 stan_sample_parameters <- read_tsv(file.path(genotypes_dir, run_names$bayes_run_name, "sample_parameters_hierarchical.tsv"), show_col_types = FALSE) # wolf ancestry per sample from 05
+
+# All the reference, sample and hybrids animals from .rds in the 08a stage
+invisible(list2env(readRDS(file.path(ancestry_out_dir, "ancestry_inputs.rds")), envir = environment()))
+
+# NewHybrids and STRUCTURE folders and the keys written in 08a
+newhybrids_dir <- file.path(ancestry_out_dir, "NewHybrids")
+newhybrids_power_dir <- file.path(ancestry_out_dir, "NewHybrids_power")
+structure_dir <- file.path(ancestry_out_dir, "STRUCTURE")
+newhybrids_key <- read_tsv(file.path(newhybrids_dir, "newhybrids_key.tsv"), show_col_types = FALSE, na = character())
+power_key <- read_tsv(file.path(newhybrids_power_dir, "newhybrids_power_key.tsv"), show_col_types = FALSE, na = character())
+n_power_per_class <- 100 # same as in 08a, used for a power plot
 ```
 
-
-
-## Which wolf allele frequencies fit the samples best
-The original primer panel where I took my prior allele frequencies, primers and loci from, it also contains different columns for different freq of wolf sub populations in Europe. This chunk tests which column fits best for my set of wolves and hybrids. Chosen column (set of allele freq) specific to a sub population, is then used to simulate reference wolves, hybrids and dogs for later use in PCA, DAPC, NewHybirds.
-Simulated reference wolves should resemble wolves in my study. It calculates how likely the observed genotypes of samples are under under HWE, column with the highest log likelihood fits the samples best. If i for example picked the Iberian population my "Dinaric" wolves would look more like hybrids than actual wolves.
-
-```{r Wolf_Frequency_Fit}
-# Grabs the the column that exst in the panel
-wolf_frequency_columns <- intersect(c("FreqWOLF_all", "FreqWOLF_EastEurope", "FreqWOLF_IT", "FreqWOLF_IB"), names(panel_sheet))
-# Only wolf-like samples are used (0.875 could have been set higher, this cutoff can be changed)
-wolf_like_samples <- stan_sample_parameters$barcode[stan_sample_parameters$wolf_ancestry >= 0.875]
-
-# Counts copies og allele 1 in each flat-prior Stan genotype from my samples which have GQ > 20 (filtered with NA not included)
-wolf_like_genotypes <- stan %>%
-  filter(sample %in% wolf_like_samples, !is.na(genotype)) %>%
-  inner_join(panel_alleles[, c("locus", "allele1")], by = "locus") %>%
-  mutate(allele1_copies = (substr(genotype, 1, 1) == allele1) + (substr(genotype, 2, 2) == allele1))
-
-# Dataframe with one row per genotype sample locus pair and one colmn per population with allele 1 freq
-column_frequencies <- sapply(wolf_frequency_columns, function(column_name)
-  as.numeric(panel_sheet[[column_name]][match(wolf_like_genotypes$locus, panel_sheet[["SNP name"]])]))
-
-# Only loci with complete set of frequencies
-complete_rows <- complete.cases(column_frequencies)
-# Settings floors so log doesnt produce infinity or 0 probability of a genotype
-column_frequencies <- pmin(pmax(column_frequencies[complete_rows, , drop = FALSE], prior_floor), 1 - prior_floor)
-
-# Prroduces HWE genotype probabiliity for every genotype with dbinom(copies, 2, p) = p^2, 2p(1 - p) or (1 - p)^2. East eruopean and FreqAll are almost as good meanwhile Iberian and Italian wolf popualtion clearly dont match. Based on  number of allele 1 copies of my stan flat prior it calculates log probabilites under each population, it adds them up.
-wolf_frequency_fit <- data.frame(
-  frequency_column = wolf_frequency_columns,
-  log_likelihood = colSums(matrix(dbinom(wolf_like_genotypes$allele1_copies[complete_rows], 2, column_frequencies, log = TRUE), ncol = ncol(column_frequencies)))) %>%
-  mutate(difference_to_best = log_likelihood - max(log_likelihood)) %>%
-  arrange(desc(log_likelihood))
-
-kable(wolf_frequency_fit, digits = 1, col.names = c("Wolf frequency column", "Log-likelihood", "Difference to best"))
-```
-  
 
 
 ## PCA of genotypes with simulated reference wolves, dogs and hybrids
 Next chunk contains principal component analysis similar as in the mentioned research paper, where they used EIGENSOFT smartpca. Here i use adegent package and dudi.pca() with allele frequencies centred and not scaled. Missing genotypes are set to SNP average. It differentiates with the research paper, here I use simulated reference wolves and dogs from the panel using (freqwolf_all and freqdog columns), each locus is set up independently under HWE, no automatic outlier removal because I only have 24 samples, and I use 33 loci instead of 93.
 
 ```{r Ancestry_PCA, fig.width = 6.3, fig.height = 5, out.width = "100%", dpi = 300}
-### Data prep for PCA, combines reference, stan and naive genotypes in one table. It checks if the genotype is possible given the panel alleles of thatlocus. If its not it gives NA, wrong but possible calls stay in.
-sample_genotypes <- bind_rows(ref, stan, naive) %>%
-  inner_join(panel_alleles, by = "locus") %>%
-  mutate(genotype = ifelse((substr(genotype, 1, 1) == allele1 | substr(genotype, 1, 1) == allele2) &
-                             (substr(genotype, 2, 2) == allele1 | substr(genotype, 2, 2) == allele2), genotype, NA))
-
-# My 33 loci with valid genotypes
-pca_loci <- sort(unique(sample_genotypes$locus[!is.na(sample_genotypes$genotype)]))
-# Panel rows in the same order as pca_loci
-locus_alleles <- panel_alleles[match(pca_loci, panel_alleles$locus), ]
-  
-# How much the GQ filter removes
-kable(summarise(sample_genotypes, Samples = n_distinct(sample), Genotypes = sum(!is.na(genotype)), Missing = sum(is.na(genotype)), .by = method), caption = sprintf("Genotypes per method over %d loci (Stan genotypes with GQ < %d set to missing)", length(pca_loci), gq_cutoff))
-
-# Wide table one row per sample and method with loci as columns
-sample_table <- sample_genotypes %>%
-  transmute(individual = paste(sample, method, sep = " | "), group = method, locus, genotype) %>%
-  pivot_wider(names_from = locus, values_from = genotype)
-
-### This part creates simulated reference animals (300 wolves and dogs with genotypes for 33 loci). They are generated from the primer panel frequencies, number of allele 1 copies is drawn from binomial distribution with 2 draws (HWE genotypes), which gets converted to genotypes and stored as geningd object fo adegenet. Further analysis need the reference points so that it can place my samples in space
-set.seed(simulation_seed)
-
-# Goes through all 33  frequencies, for each locus it draws 300 animals which gives 300  0,1,2 numbers per locus (600x33) or 186 animals for "real" setting.
-if (reference_source == "real") {
-  # Reads two real reference files from Harmoinen et al. (2021)
-  reference_map <- read.table(reference_map_path, col.names = c("chromosome", "locus", "genetic_distance", "position"))
-  reference_ped <- read.table(reference_ped_path, colClasses = "character") # as character becuase of "Ts"
-  
-  # Second column of the allele, skips first six columns and times two because each column hold info for for one allele
-  allele_columns <- 6 + 2 * match(pca_loci, reference_map$locus)
-  # Two tables for first and second allele for all 33 loci
-  first_alleles <- as.matrix(reference_ped[, allele_columns - 1])
-  second_alleles <- as.matrix(reference_ped[, allele_columns])
-  real_allele1 <- matrix(rep(locus_alleles$allele1, each = nrow(reference_ped)), nrow = nrow(reference_ped))
-
-  # Copies of allele 1 0, 1, 2 for HM, HT, or different HM, zero in the ped file is assigned to NA
-  real_copies <- (first_alleles == real_allele1) + (second_alleles == real_allele1)
-  real_copies[first_alleles == "0" | second_alleles == "0"] <- NA
-
-  # Sample draws n_reference_woolves amount of random animals from the assigned groups in settings
-  wolf_rows <- sample(which(reference_ped$V1 %in% reference_wolf_groups), n_reference_wolves)
-  dog_rows <- sample(which(reference_ped$V1 %in% reference_dog_groups), n_reference_dogs)
-  parent_copies <- real_copies[c(wolf_rows, dog_rows), ]
-} else {
-  parent_copies <- rbind(sapply(locus_alleles$wolf_frequency, function(frequency) rbinom(n_reference_wolves, 2, frequency)),
-                         sapply(locus_alleles$dog_frequency, function(frequency) rbinom(n_reference_dogs, 2, frequency)))
-}
-
-# Label for each row
-parent_group <- rep(c("Simulated wolf", "Simulated dog"), c(n_reference_wolves, n_reference_dogs))
-
-# Allele 1 and 2  letters for each locus repetead for every animal
-allele1_matrix <- matrix(rep(locus_alleles$allele1, each = nrow(parent_copies)), nrow = nrow(parent_copies))
-allele2_matrix <- matrix(rep(locus_alleles$allele2, each = nrow(parent_copies)), nrow = nrow(parent_copies))
-
-# Based on a number 0, 1, 2 it becomes a genotype and gets the alleles form previous matrices
-parent_genotypes <- ifelse(parent_copies == 2, paste0(allele1_matrix, allele1_matrix),
-                           ifelse(parent_copies == 1, paste0(allele1_matrix, allele2_matrix), paste0(allele2_matrix, allele2_matrix)))
-colnames(parent_genotypes) <- pca_loci
-parent_genotypes[is.na(parent_genotypes)] <- "" # missing genotypes for real animals from reference population
-
-# Turns it into a genind object, each allele is one character with names and parent groups
-parent_genind <- df2genind(as.data.frame(parent_genotypes), ncode = 1, ploidy = 2,
-                           ind.names = paste(parent_group, seq_along(parent_group)), pop = parent_group, NA.char = "")
-
-#These are split using pop for later hybridize() which need two parent populations (for backcrosses)
-wolf_genind <- parent_genind[pop(parent_genind) == "Simulated wolf"]
-dog_genind <- parent_genind[pop(parent_genind) == "Simulated dog"]
-
-### This part creates simulated hybrids from the simulated wolves and dogs and turns my samples into genind objects as well and combines everything into one complete genind that feeds the PCA and DAPC
-# All the possible hybridizations with second backcrosses as well.
-f1_genind <- hybridize(wolf_genind, dog_genind, n = n_simulated_per_hybrid_class, pop = "Simulated F1", hyb.label = "F1_", quiet = TRUE) #  50 %
-backcross_wolf_genind <- hybridize(wolf_genind, f1_genind, n = n_simulated_per_hybrid_class, pop = "Simulated backcross to wolf", hyb.label = "BCwolf_", quiet = TRUE) # 75 %
-backcross_dog_genind <- hybridize(dog_genind, f1_genind, n = n_simulated_per_hybrid_class, pop = "Simulated backcross to dog", hyb.label = "BCdog_", quiet = TRUE) # 25 %
-second_backcross_wolf_genind <- hybridize(wolf_genind, backcross_wolf_genind, n = n_simulated_per_hybrid_class, pop = "Simulated second backcross to wolf", hyb.label = "BC2wolf_", quiet = TRUE) # 87.5 %
-second_backcross_dog_genind <- hybridize(dog_genind, backcross_dog_genind, n = n_simulated_per_hybrid_class, pop = "Simulated second backcross to dog", hyb.label = "BC2dog_", quiet = TRUE)  # 12.5%
-
-# Locus column in pca_loci order
-genotype_columns <- as.data.frame(sample_table[, pca_loci])
-genotype_columns[is.na(genotype_columns)] <- "" # replaces NA for "" for genind
-
-# Genind for my samples, pop is set by group (stan, naive, reference)
-sample_genind <- df2genind(genotype_columns, ncode = 1, ploidy = 2, ind.names = sample_table$individual, pop = sample_table$group, NA.char = "")
-
-# Combines all either 2172 animals with simulatede setting (300 per group) or 1374 with real setting (186 per group)
-all_genind <- repool(parent_genind, f1_genind, backcross_wolf_genind, backcross_dog_genind,
-                     second_backcross_wolf_genind, second_backcross_dog_genind, sample_genind)
-animal_group <- as.character(pop(all_genind))
-
 ### This part runs the PCA, genotypes are converted to allele freq per animal, missing genotypes are replcaed by the allele mean.
 
 # Number table one row per animal, convertes genotypes into numbers 
@@ -478,90 +343,6 @@ ggsave(file.path(ancestry_out_dir, "ancestry_panel.pdf"), ancestry_panel, width 
 
 
 
-## NewHybrids input data preparation
-This chunk contains data prep for NewHybrids software with correct genotype codes per sample. It computes posterior probability for all six classes with Harmoinen et al (2021) research paper in mind. 100 simulated wolves and dogs are inputed as known pure parents (z0 for wolves, z1 for dogs). My samples use the flat prior as previious PCA analysis with same GQ cutoff.
-
-Command used to run NewHybrids from the folder: 
-`~/Tools/newhybrids/bin/OSX/newhybsng -d newhybrids_input.txt --burn-in 100000`
-`--num-sweeps 500000 --theta-prior Jeffreys --pi-prior Jeffreys -s 1 2 --no-gui`
-
-```{r NewHybrids_Input}
-# Number of simulated wolves and dogs as pure parents, reference point for NewHybrids
-n_newhybrids_reference <- 100 
-
-# New folder for NewHybrids inside ancestry analysis
-newhybrids_dir <- file.path(ancestry_out_dir, "NewHybrids")
-dir.create(newhybrids_dir, showWarnings = FALSE)
-
-# Takes the wide sample table wtih sample rows by method and column as loci. stan genotypes used only in pca_loci order and turns it into matrix
-stan_genotype_letters <- as.matrix(sample_table[sample_table$group == "Stan genotypes", pca_loci])
-
-# Count copies of allele 1 and write the number insdie each cell (0, 1, 2) with the help of allele1_letters. Same trick as before.
-allele1_letters <- matrix(rep(locus_alleles$allele1, each = nrow(stan_genotype_letters)), nrow = nrow(stan_genotype_letters))
-sample_copies <- (substr(stan_genotype_letters, 1, 1) == allele1_letters) + (substr(stan_genotype_letters, 2, 2) == allele1_letters)
-
-# Picks 100 refeerence animals from previously made 300 parent copies (wolves 1 -300, 301- 600 dogs ) and stack them
-reference_copies <- parent_copies[c(1:n_newhybrids_reference, n_reference_wolves + 1:n_newhybrids_reference), ]
-newhybrids_copies <- rbind(reference_copies, sample_copies)
-
-# Turns the 0, 1, 2 number into NewHyibrids input codes.
-newhybrids_genotypes <- ifelse(is.na(newhybrids_copies), "0", c("22", "12", "11")[newhybrids_copies + 1])
-# Adds flags, z0 for known pure animal from popualtion 0 (wolf), z1 for pure dogs, "" unkown, what the software estimates
-newhybrids_flags <- c(rep("z0", n_newhybrids_reference), rep("z1", n_newhybrids_reference), rep("", nrow(sample_copies)))
-newhybrids_lines <- paste(seq_len(nrow(newhybrids_genotypes)), newhybrids_flags, apply(newhybrids_genotypes, 1, paste, collapse = " "))
-
-# writes the file for NewHybrids
-writeLines(c(paste("NumIndivs", nrow(newhybrids_genotypes)), paste("NumLoci", length(pca_loci)), "Digits 1", "Format Lumped", "",
-             paste("LocusNames", paste(pca_loci, collapse = " ")), "", newhybrids_lines),
-           file.path(newhybrids_dir, "newhybrids_input.txt"))
-
-# Key to match the NewHybrids output rows back to the animals
-newhybrids_key <- data.frame(index = seq_len(nrow(newhybrids_genotypes)), animal = c(paste("Simulated wolf", 1:n_newhybrids_reference), paste("Simulated dog", 1:n_newhybrids_reference), sub(" \\| .*", "", sample_table$individual[sample_table$group == "Stan genotypes"])),flag = newhybrids_flags)
-
-write_tsv(newhybrids_key, file.path(newhybrids_dir, "newhybrids_key.tsv"))
-```
-
-
-
-## NewHybrids power input data preparation
-This part checks how sure you can be that the NewHybirds classification is correct, it test how much you can trust each class from my 24 samples. Same idea as in the Harmoinen et al. research paper. It saves into a separete folder, it tests 100 animals per 5 hybrid classes.
-
-```{r NewHybrids_Power_Input}
-# simulated hybrids per class as in referencer research paper
-n_power_per_class <- 100 
-power_classes <- c("Simulated F1", "Simulated backcross to wolf", "Simulated backcross to dog",
-                   "Simulated second backcross to wolf", "Simulated second backcross to dog")
-# Output path
-newhybrids_power_dir <- file.path(ancestry_out_dir, "NewHybrids_power")
-dir.create(newhybrids_power_dir, showWarnings = FALSE)
-
-# First 100 animals of every simulated hybrid class, copies of allele 1 read from the genind
-power_rows <- unlist(lapply(power_classes, function(group_name) which(animal_group == group_name)[1:n_power_per_class]))
-# Safety check my first run ran with only 50 animals accidentaly
-stopifnot(!anyNA(power_rows))
-power_copies <- tab(all_genind[power_rows])[, paste0(pca_loci, ".", locus_alleles$allele1)]
-
-
-# Same reference wolves (z0) and dogs (z1) as in the previous run, same file prep
-power_input_copies <- rbind(reference_copies, power_copies)
-power_genotypes <- ifelse(is.na(power_input_copies), "0", c("22", "12", "11")[power_input_copies + 1])
-power_flags <- c(rep("z0", n_newhybrids_reference), rep("z1", n_newhybrids_reference), rep("", nrow(power_copies)))
-power_lines <- paste(seq_len(nrow(power_genotypes)), power_flags, apply(power_genotypes, 1, paste, collapse = " "))
-
-writeLines(c(paste("NumIndivs", nrow(power_genotypes)), paste("NumLoci", length(pca_loci)), "Digits 1", "Format Lumped", "",
-             paste("LocusNames", paste(pca_loci, collapse = " ")), "", power_lines),
-           file.path(newhybrids_power_dir, "newhybrids_power_input.txt"))
-
-# Key with the true class of every animal
-power_key <- data.frame(index = seq_len(nrow(power_genotypes)),
-                        true_class = c(rep("Simulated wolf", n_newhybrids_reference),
-                                       rep("Simulated dog", n_newhybrids_reference), animal_group[power_rows]),
-                        flag = power_flags)
-write_tsv(power_key, file.path(newhybrids_power_dir, "newhybrids_power_key.tsv"))
-```
-
-
-
 ## NewHybrids power results
 
 ```{r NewHybrids_Power_Results, eval = file.exists(file.path(newhybrids_power_dir, "aa-PofZ.txt")), fig.width = 6.3, fig.height = 5, out.width = "100%", dpi = 300}
@@ -651,62 +432,6 @@ p_newhybrids <- ggplot(newhybrids_long, aes(factor(sample, levels = dapc_order),
 p_newhybrids
 ggsave(file.path(newhybrids_dir, "newhybrids_classes.png"), p_newhybrids, width = 16, height = 12.7, units = "cm", dpi = 300, bg = "white")
 ggsave(file.path(newhybrids_dir, "newhybrids_classes.pdf"), p_newhybrids, width = 16, height = 12.7, units = "cm", device = cairo_pdf)
-```
-
-
-
-## STRUCTURE input data preparation
-This chunk contains input data prep for STRUCTURE analysis. Specific allele strucutre input for all 33 loci and mainparams and extraparams file with mainly defualt values except for settings which are relavant to analysis from Harmoinen et al. Run with admixutre model, correlated allele freq, 50000 burn in and 500000 repetitions, and 95 % interval (ANCESTPINT) so its later comparable to my Bayesian ancestry run, two clusters (k = 2, for wolf and dog) with fixed seed.
-
-Command for running STRUCTURE:
-
-`for run in 1 2 3 4 5; do`
- `~/Tools/structure/structure_kernel_src/structure -m mainparams -e extraparams`
- `-K 2 -D $run -o structure_K2_run$run > log_run$run.txt &`
- `done; wait`
-
-```{r STRUCTURE_Input}
-# New output paths for STRUCTURE
-structure_dir <- file.path(ancestry_out_dir, "STRUCTURE")
-dir.create(structure_dir, showWarnings = FALSE)
-
-# All the parent animals and samples combined (186 reference wolves and dogs and 24 samples)
-structure_copies <- rbind(parent_copies, sample_copies)
-# Makes names for reference animals wolf_1 to wolf_186 and so on, my samples keep id
-structure_labels <- c(paste0("wolf_", seq_len(n_reference_wolves)), paste0("dog_", seq_len(n_reference_dogs)), newhybrids_key$animal[newhybrids_key$flag == ""])
-# Makes 1 (wolf), 2 (dog), 3 (sample) labels for STR  
-structure_population <- rep(1:3, c(n_reference_wolves, n_reference_dogs, nrow(sample_copies)))
-
-# Converts it into allele input type for STRUCTURE (if to copies of allele 1, then its converted to 1 meaning HM for allele 1)
-first_allele <- ifelse(is.na(structure_copies), -9, ifelse(structure_copies >= 1, 1, 2))
-second_allele <- ifelse(is.na(structure_copies), -9, ifelse(structure_copies == 2, 1, 2))
-
-# Binds two column for both alleles per locus in pca_loci order
-structure_alleles <- cbind(first_allele, second_allele)[, order(rep(seq_along(pca_loci), 2))]
-
-# writes input file for STRUCTURE with header names
-writeLines(c(paste(pca_loci, collapse = " "), paste(structure_labels, structure_population, apply(structure_alleles, 1, paste, collapse = " "))), file.path(structure_dir, "structure_input.txt"))
-
-# Same settings as in Harmoinen et al. run with admixutre model, correlated allele freq, 50000 burn in and 500000 repetitions, and 95 % interval (ANCESTPINT) so its later comparable to my Bayesian ancestry run, two clusters (k = 2, for wolf and dog) with fixed seed. All other param are mainly defualts.
-structure_mainparams <- c(MAXPOPS = "2", BURNIN = "50000", NUMREPS = "500000", INFILE = "structure_input.txt", 
-                          OUTFILE = "structure_output", NUMINDS = nrow(structure_alleles), NUMLOCI = length(pca_loci), 
-                          PLOIDY = "2", MISSING = "-9", ONEROWPERIND = "1", LABEL = "1", POPDATA = "1", POPFLAG = "0", 
-                          LOCDATA = "0", PHENOTYPE = "0", EXTRACOLS = "0", MARKERNAMES = "1", RECESSIVEALLELES = "0", 
-                          MAPDISTANCES = "0", PHASED = "0", PHASEINFO = "0", MARKOVPHASE = "0", NOTAMBIGUOUS = "-999")
-
-structure_extraparams <- c(NOADMIX = "0", LINKAGE = "0", USEPOPINFO = "0", LOCPRIOR = "0", FREQSCORR = "1", ONEFST = "0", 
-                           INFERALPHA = "1", POPALPHAS = "0", ALPHA = "1.0", INFERLAMBDA = "0", POPSPECIFICLAMBDA = "0", 
-                           LAMBDA = "1.0", FPRIORMEAN = "0.01", FPRIORSD = "0.05", UNIFPRIORALPHA = "1", ALPHAMAX = "10.0",
-                           ALPHAPRIORA = "1.0", ALPHAPRIORB = "2.0", LOG10RMIN = "-4.0", LOG10RMAX = "1.0", LOG10RPROPSD = "0.1",
-                           LOG10RSTART = "-2.0", GENSBACK = "2", MIGRPRIOR = "0.01", PFROMPOPFLAGONLY = "0", LOCISPOP = "0",
-                           LOCPRIORINIT = "1.0", MAXLOCPRIOR = "20.0", PRINTNET = "1", PRINTLAMBDA = "1", PRINTQSUM = "1", 
-                           SITEBYSITE = "0", PRINTQHAT = "0", UPDATEFREQ = "10000", PRINTLIKES = "0", INTERMEDSAVE = "0", 
-                           ECHODATA = "1", ANCESTDIST = "1", NUMBOXES = "1000", ANCESTPINT = "0.95", COMPUTEPROB = "1", 
-                           ADMBURNIN = "500", ALPHAPROPSD = "0.025", STARTATPOPINFO = "0", RANDOMIZE = "0", SEED = "1", 
-                           METROFREQ = "10", REPORTHITRATE = "0")
-# Saves params for STR
-writeLines(paste("#define", names(structure_mainparams), structure_mainparams), file.path(structure_dir, "mainparams"))
-writeLines(paste("#define", names(structure_extraparams), structure_extraparams), file.path(structure_dir, "extraparams"))
 ```
 
 
