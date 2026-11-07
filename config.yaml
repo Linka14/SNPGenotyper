@@ -1,4 +1,4 @@
-# All the Master_pipeline.Rmd settings copied to one file, snakemake and render_tage.R later reads this file. Paths are written from the project folder
+# All the settings copied into one file, snakemake and render_tage.R later reads this file. Paths are written from the project folder
 
 shared_settings:
   # Dataset
@@ -98,9 +98,9 @@ settings_08_ancestry_validation:
   reference_dog_groups: ["dog_Illumina", "dog_nonpedigree"]
   wolf_frequency_column: "FreqWOLF_EastEurope" # FreqWOLF_all, FreqWOLF_EastEurope, FreqWOLF_IT or FreqWOLF_IB
   dog_frequency_column: "FreqDOG"
-  n_reference_wolves: 186 # or 186 for "real" setting (that is the max number of wolves for EastEuropean subpops)
-  n_reference_dogs: 186
-  n_simulated_per_hybrid_class: 186 # for F1, first and second backcrosses
+  n_reference_wolves: 186 # 186 for "real" setting (that is the max number of wolves for EastEuropean subpops) or 300
+  n_reference_dogs: 186 # or 300
+  n_simulated_per_hybrid_class: 186 # for F1, first and second backcrosses, or 300
   simulation_seed: 1
   structure_runs: 5 # number of independent STRUCTURE runs
   
