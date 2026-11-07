@@ -33,6 +33,7 @@ params:
   input_type: "unpadded" # "padded" or "unpadded"
   use_anchors: true
   anchor_length: 3
+  probe_type: "asp_primers" # or "reference"
   threshold_type: "errors" # "fraction" or "errors"
   min_score_fraction: 0.65 # "fraction" only
   error_rate: 0.08 # "errors" only
@@ -76,7 +77,6 @@ suppressMessages({
   library(readxl)
   library(ggplot2)
   library(scales)
-  library(knitr)
 })
 
 # Settings come from the params block in the YAML header, this turns them into usable variables
@@ -92,7 +92,7 @@ timing_log <- list()
 
 # Folder names are built with a shared function inside asp_functions.R, it gives a unique name based on changed settings for every run. If you use the same settings to rerun it again it gets overwritten. 
 run_names <- build_run_names(input_type, use_anchors, anchor_length, threshold_type, error_rate, min_score_fraction,
-                             prior_type, prior_het_share, prior_population, prior_floor,
+                             prior_type, prior_het_share, prior_population, prior_floor, probe_type = probe_type,
                              ancestry_prior_shape = ancestry_prior_shape, phi_hom_structure = phi_hom_structure)
 genotypes_dir <- file.path("Results", dataset_name, "Genotypes_results")
 failed_genotypes_path <- switch(failed_genotypes_source,
@@ -112,7 +112,7 @@ out_dir_failed <- file.path("Results", dataset_name, "Graphics/Failed_Genotypes_
 dir.create(out_dir_failed, showWarnings = FALSE, recursive = TRUE)
 
 # Same primer panel preparation as in the ASP genotype pipeline
-panel <- prepare_primer_panel(primer_panel_path, reference_path, input_type, use_anchors, anchor_length)
+panel <- prepare_primer_panel(primer_panel_path, reference_path, input_type, use_anchors, anchor_length, probe_type = probe_type)
 
 # Barcode name mapping
 barcode_map <- read_tsv(barcode_map_path, show_col_types = FALSE) %>%
@@ -455,7 +455,7 @@ kable(failed_pair_summary, col.names = c("Sample", "Locus", "Voting reads", "Vot
 
 ```{r Amplicon_Plots_In_Report, eval = nrow(failed_markers) > 0, out.width = "100%"}
 # Renders the plots inside the html, this is used because plots are made in a loop a can be of varying heights, depending on the number of miscalled reads
-include_graphics(normalizePath(plot_paths), rel_path = FALSE)
+if (length(plot_paths) > 0) include_graphics(normalizePath(plot_paths), rel_path = FALSE)
 ```
 
 

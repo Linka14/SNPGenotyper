@@ -50,12 +50,20 @@ settings_05 = config["settings_05_bayesian"]
 downsampling_folder = (f"Results/{dataset_name}/Graphics/STAN_Hierarchical/{bayes_settings_label}/Downsampling_calibration"
                        f"{'_sdown' if config['shared_settings']['strand_downgrade'] else '_sflag'}"
                        f"_r{settings_05['minimum_reads_for_truth_pair']}_d{max(settings_05['read_depths_to_test'])}_n{settings_05['draws_per_depth']}")
-                      
+                       
+# Checking which setting (genotypes table from which specific method to check) is set in config.yaml, based on that it chooses the
+# input and ouput folder
+failed_from_asp = config["settings_07_failed_genotypes"]["failed_genotypes_source"] == "asp_genotypes"
+failed_genotypes_table = (f"{asp_folder}/all_barcodes_asp_genotypes.tsv" if failed_from_asp
+                          else f"{bayes_folder}/all_barcodes_base_mixture_genotypes_hierarchical.tsv")
+failed_folder = f"Results/{dataset_name}/Graphics/Failed_Genotypes_Analysis/{asp_run_name if failed_from_asp else bayes_run_name}"
+
 rule all:
     input:
         "Code/HTMLs/02_ObiTools4_Basic_Visualisation.html",
         "Code/HTMLs/03_SNP_Genotyping_MiniMap2.html",
-        "Code/HTMLs/06b_Genotyping_Results.html"
+        "Code/HTMLs/06b_Genotyping_Results.html",
+        "Code/HTMLs/07_Failed_Genotypes_Analysis.html"
 
 rule stage_01a_dorado: 
     input:
@@ -267,3 +275,25 @@ rule stage_06c_speed:
     shell:
         "{params.timer} Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/06c_Speed_Optimisation.Rmd config.yaml shared_settings 2>&1 | tee {log}"
 
+rule stage_07_failed_genotypes:
+    input:
+        genotypes = failed_genotypes_table,
+        asp_reads = f"{asp_folder}/all_barcodes_asp_reads.tsv",
+        reference_genotypes = f"Data/Supporting_data/Reference_genotypes/genotypes_{dataset_name}.tsv",
+        reads = asp_input_fastqs,
+        barcode_map = config["shared_settings"]["barcode_map_path"],
+        primer_panel = config["shared_settings"]["primer_panel_path"],
+        reference = config["shared_settings"]["reference_path"],
+        functions = "Code/R_scripts/asp_functions.R"
+    output:
+        html = "Code/HTMLs/07_Failed_Genotypes_Analysis.html",
+        summary = f"{failed_folder}/Failed_markers_summary.tsv"
+    params:
+        settings = stage_settings("Code/Rmd_Stages/07_Failed_Genotypes_Analysis.Rmd", ["shared_settings", "settings_05_bayesian", "settings_07_failed_genotypes"]),
+        timer = config["workflow_settings"]["timer_command"]
+    log:
+        "logs/stage_07.log"
+    benchmark:
+        "benchmarks/stage_07.tsv"
+    shell:
+        "{params.timer} Rscript Code/R_scripts/render_stage.R Code/Rmd_Stages/07_Failed_Genotypes_Analysis.Rmd config.yaml shared_settings settings_05_bayesian settings_07_failed_genotypes 2>&1 | tee {log}"
