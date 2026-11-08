@@ -104,13 +104,13 @@ full_header <- full_header[sapply(strsplit(full_header, "::"), `[`, 1) %in% pane
 
 
 # Finds minimap2 and samtools on any Mac/Linux computer, YAML folder first, then the terminal PATH
-login_shell_path <- tryCatch(system2(Sys.getenv("SHELL", "/bin/zsh"), c("-ilc", shQuote("echo $PATH")), stdout = TRUE, stderr = FALSE, timeout = 10),
-                             error = function(e) "", warning = function(w) "") # PATH from the user's terminal settings
+login_shell_path <- tryCatch(system2(Sys.getenv("SHELL", "/bin/zsh"), c("-ilc", shQuote("echo $PATH")), stdout = TRUE, stderr = FALSE, timeout = 10), error = function(e) "", warning = function(w) "") # PATH from the user's terminal settings
 tool_search_folders <- unique(path.expand(c(minimap2_bin_folder, samtools_bin_folder,
+                                            if (nzchar(Sys.getenv("CONDA_PREFIX"))) file.path(Sys.getenv("CONDA_PREFIX"), "bin"), # active conda environment first
                                             strsplit(tail(c("", login_shell_path), 1), ":")[[1]],
                                             rev(Sys.glob(path.expand(c("~/*/bin", "~/*/*/bin", "~/*/*/*/bin")))),
-                                            Sys.glob(path.expand(c("~/*conda*/bin", "~/*conda*/envs/*/bin", "~/mambaforge/envs/*/bin"))),
-                                            "/usr/local/bin", "/opt/homebrew/bin", Sys.glob("/opt/*/bin"))))
+                                            Sys.glob(path.expand(c("~/*conda*/bin", "~/*conda*/envs/*/bin", "~/mambaforge/envs/*/bin"))), "/usr/local/bin", "/opt/homebrew/bin", Sys.glob("/opt/*/bin"))))
+
 needed_tools <- c("minimap2", "samtools")
 tool_files <- sapply(needed_tools, function(tool) {
   found_in <- tool_search_folders[file.exists(file.path(tool_search_folders, tool))]

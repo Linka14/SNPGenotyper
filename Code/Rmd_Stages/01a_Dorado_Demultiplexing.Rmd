@@ -72,10 +72,10 @@ invisible(list2env(params, envir = environment()))
 # Paths to the installed Dorado and ObiTools4 directories so R can find the commands
 login_shell_path <- tryCatch(system2(Sys.getenv("SHELL", "/bin/zsh"), c("-ilc", shQuote("echo $PATH")), stdout = TRUE, stderr = FALSE, timeout = 10), error = function(e) "", warning = function(w) "") # PATH from the user's terminal settings, RStudio does not read them
 tool_search_folders <- unique(path.expand(c(dorado_bin_folder, # YAML folders first, a set path always wins
+                                            if (nzchar(Sys.getenv("CONDA_PREFIX"))) file.path(Sys.getenv("CONDA_PREFIX"), "bin"), # active conda environment first
                                             strsplit(tail(c("", login_shell_path), 1), ":")[[1]],
                                             rev(Sys.glob(path.expand(c("~/*/bin", "~/*/*/bin", "~/*/*/*/bin")))), # unpacked anywhere in the home folder, newest version first
-                                            Sys.glob(path.expand(c("~/*conda*/bin", "~/*conda*/envs/*/bin", "~/mambaforge/envs/*/bin"))), # conda installs
-                                            "/usr/local/bin", "/opt/homebrew/bin", Sys.glob("/opt/*/bin"))))
+                                            Sys.glob(path.expand(c("~/*conda*/bin", "~/*conda*/envs/*/bin", "~/mambaforge/envs/*/bin"))), "/usr/local/bin", "/opt/homebrew/bin", Sys.glob("/opt/*/bin"))))
 needed_tools <- c("dorado")
 tool_folders <- sapply(needed_tools, function(tool) {
   found_in <- tool_search_folders[file.exists(file.path(tool_search_folders, tool))]

@@ -1,0 +1,10 @@
+name: NanoporeSNPGenotyper
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - snakemake=9.27.1
+  - snakefmt
+  - graphviz
+  - minimap2=2.31
+  - samtools=1.23

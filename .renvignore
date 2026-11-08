@@ -1,0 +1,7 @@
+Data/
+Results/
+Code/HTMLs/
+.snakemake/
+logs/
+benchmarks/
+doc/

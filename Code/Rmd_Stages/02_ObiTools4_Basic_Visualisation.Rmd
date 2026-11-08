@@ -73,12 +73,13 @@ timing_log <- list()
 invisible(list2env(params, envir = environment()))
 
 # Path to the installed ObiTools4 directories so R can find the commands
-login_shell_path <- tryCatch(system2(Sys.getenv("SHELL", "/bin/zsh"), c("-ilc", shQuote("echo $PATH")), stdout = TRUE, stderr = FALSE, timeout = 10),
-                             error = function(e) "", warning = function(w) "")
-tool_search_folders <- unique(path.expand(c(obitools_bin_folder, strsplit(tail(c("", login_shell_path), 1), ":")[[1]],
+login_shell_path <- tryCatch(system2(Sys.getenv("SHELL", "/bin/zsh"), c("-ilc", shQuote("echo $PATH")), stdout = TRUE, stderr = FALSE, timeout = 10), error = function(e) "", warning = function(w) "")
+
+tool_search_folders <- unique(path.expand(c(obitools_bin_folder, if (nzchar(Sys.getenv("CONDA_PREFIX"))) file.path(Sys.getenv("CONDA_PREFIX"), "bin"), 
+                                            strsplit(tail(c("", login_shell_path), 1), ":")[[1]],
                                             rev(Sys.glob(path.expand(c("~/*/bin", "~/*/*/bin", "~/*/*/*/bin")))),
-                                            Sys.glob(path.expand(c("~/*conda*/bin", "~/*conda*/envs/*/bin", "~/mambaforge/envs/*/bin"))),
-                                            "/usr/local/bin", "/opt/homebrew/bin", Sys.glob("/opt/*/bin"))))
+                                            Sys.glob(path.expand(c("~/*conda*/bin", "~/*conda*/envs/*/bin", "~/mambaforge/envs/*/bin"))), "/usr/local/bin", "/opt/homebrew/bin", Sys.glob("/opt/*/bin"))))
+
 needed_tools <- c("obicsv", "obisummary")
 tool_folders <- sapply(needed_tools, function(tool) {
   found_in <- tool_search_folders[file.exists(file.path(tool_search_folders, tool))]

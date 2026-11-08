@@ -48,9 +48,25 @@ small NB03 W211225
 | 08a | `08a_Ancestry_Inputs.Rmd` | Data preparation of reference animals, simulated hybrids, wolf frequency fit and the NewHybrids and STRUCTURE input files |
 | 08b | `08b_Ancestry_Results.Rmd` | PCA, DAPC, NewHybrids, NewHybrids power analysis, STRUCTURE and the combined ancestry table |
 
-## Requirements
+## Requirements and installation
 
-Software versions used:
+The software used inside this project and coresponding exact versions are recorded inside two files:
+- `envs/NanoporeSNPGenotyper.yaml` is a conda environment with Snakemake, minimap2 and samtools
+- `renv/renv.lock` are the exact versions of all R packages (renv) used by NanoporeSNPGenotyper
+
+To set up the pipeline on a new computer use these, run them from the project folder. Renv switches on 
+automatically whenever R starts in this folder, both in RStudio or if Snakemake runs a specific stage.
+
+```
+conda env create -f envs/NanoporeSNPGenotyper.yaml
+conda activate NanoporeSNPGenotyper
+Rscript -e 'renv::restore()'
+```
+
+Dorado, ObiTools4, STRUCTURE and NewHybrids are installed separately. Their paths are set in `config/config.yaml` (empty means the 
+program is found on the PATH). Software version are defined for the whole project rather than per rule, because most stages are R Markdown 
+files and the R packages are managed with renv (`snakemake --lint` still reports that the rules have no `conda:` directive, which is expected).
+
 
 | Software | Version | Notes |
 |----|----|----|
@@ -64,9 +80,9 @@ Software versions used:
 | **NewHybrids** |  | command-line version, ([eriqande/newhybrids](https://github.com/eriqande/newhybrids) |
 | **graphviz, snakefmt** |  | are optional for rule graph picture and Snakefile formatting |
 
-**R packages**: rmarkdown, knitr, yaml, dplyr, tidyr, readr, readxl, ggplot2, patchwork, scales, Biostrings, pwalign, rstan, adegenet, lme4. The exact package versions of each run are listed in the "Session info" section at the end of every HTML report.
+**R packages**: rmarkdown, knitr, yaml, dplyr, tidyr, readr, readxl, ggplot2, patchwork, scales, Biostrings, pwalign, rstan, adegenet, lme4, bayesplot, jsonlite. 
+The exact package versions of each run are listed in the "Session info" section at the end of every HTML report.
 
-The paths to dorado, ObiTools4, minimap2 and samtools are set in `config/config.yaml`, the paths to NewHybrids and STRUCTURE in `workflow_settings`.
 
 ## Folder structure
 
@@ -79,6 +95,9 @@ Full_workflow/
 │   └── README.md              Description of every setting
 ├── profiles/default/
 │   └── config.yaml            Snakemake run options
+├── envs/
+│   └── NanoporeSNPGenotyper.yaml   conda environment
+├── renv/                           R package versions (renv.lock) and renv setup
 ├── Code/
 │   ├── Rmd_Stages/            Stage Rmds
 │   ├── R_scripts/             Render_stage.R, asp_functions.R (shared functions)
