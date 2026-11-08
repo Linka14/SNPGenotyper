@@ -145,7 +145,7 @@ dir.create(output_folder_name_hier, showWarnings = FALSE, recursive = TRUE)
 write.table(settings_used, file.path(output_folder_name_hier, "settings_used.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
 
 # PAth to the stan model, compiled model is saved next to it
-stan_model_path_hier <- "Stan_config/base_mixture_model_hierarchical.stan"
+stan_model_path_hier <- "Code/Stan/base_mixture_model_hierarchical.stan"
 rstan_options(auto_write = TRUE) 
 mixture_stan_hier_model <- stan_model(stan_model_path_hier)
 

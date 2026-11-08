@@ -5,6 +5,8 @@ import subprocess
 
 
 configfile: "config/config.yaml"
+
+
 validate(config, "config/config.schema.yaml")
 
 ### ==================================
@@ -12,6 +14,7 @@ validate(config, "config/config.schema.yaml")
 # which each one uses specifically, those are taken from the config.yaml sections. Otherwise changing the settings from Bayes stage
 # would rerun whole pipeline. It reads the rmd stage, splits it by "---", takes just the yaml header, turns it into dictionary
 # and grabs just the params block. Then for every setting name inside Rmd it finds the config.yaml value and updates the settings.
+
 
 def stage_settings(stage_rmd, section_names):
     declared_settings = yaml.safe_load(open(stage_rmd).read().split("---")[1])["params"]
@@ -23,6 +26,7 @@ def stage_settings(stage_rmd, section_names):
         for name in declared_settings
         if name in combined_settings
     }
+
 
 ### ==================================
 ### Settings or values used to build the file paths are taken from config.yaml
@@ -55,7 +59,7 @@ run_names = subprocess.run(
     [
         "Rscript",
         "-e",
-   'source("Code/R_scripts/asp_functions.R"); config <- yaml::read_yaml("config/config.yaml"); s <- c(config$shared_settings, config$settings_05_bayesian); '
+        'source("Code/R_scripts/asp_functions.R"); config <- yaml::read_yaml("config/config.yaml"); s <- c(config$shared_settings, config$settings_05_bayesian); '
         "run_names <- build_run_names(s$input_type, s$use_anchors, s$anchor_length, s$threshold_type, s$error_rate, s$min_score_fraction, "
         "s$prior_type, s$prior_het_share, s$prior_population, s$prior_floor, probe_type = s$probe_type, "
         "ancestry_prior_shape = s$ancestry_prior_shape, phi_hom_structure = s$phi_hom_structure); "
@@ -293,7 +297,7 @@ rule stage_05a_bayesian:
     input:
         asp_reads=asp_reads_table,
         asp_genotypes=asp_genotypes_table,
-        stan_model="Stan_config/base_mixture_model_hierarchical.stan",
+        stan_model="Code/Stan/base_mixture_model_hierarchical.stan",
         primer_panel=config["shared_settings"]["primer_panel_path"],
     output:
         html="Code/HTMLs/05a_SNP_Bayesian_Genotyping.html",
@@ -319,7 +323,7 @@ rule stage_05a_bayesian_genotype_prior:
     input:
         asp_reads=asp_reads_table,
         asp_genotypes=asp_genotypes_table,
-        stan_model="Stan_config/base_mixture_model_hierarchical.stan",
+        stan_model="Code/Stan/base_mixture_model_hierarchical.stan",
         primer_panel=config["shared_settings"]["primer_panel_path"],
     output:
         html=f"Code/HTMLs/05a_SNP_Bayesian_Genotyping_{genotype_prior_type}.html",

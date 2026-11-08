@@ -1,0 +1,72 @@
+## created with snakemake --rulegraph mermaid-js
+---
+config:
+  layout: elk
+  theme: base
+  themeVariables:
+    background: "#FFFFFF"
+    lineColor: "#8B775F"
+    fontFamily: "Times New Roman"
+---
+flowchart TB
+    id3["01a Dorado demultiplexing"]
+    id2["01b ObiTools4 demultiplexing"]
+    id1["02 ObiTools4 summaries"]
+    id4["03 Minimap2 genotyping"]
+    id6["04 ASP genotyping"]
+    id7["05a Bayesian genotyping (ancestry prior)"]
+    id13["05a Bayesian genotyping (flat prior)"]
+    id8["05b Downsampling and calibration"]
+    id9["06a Pipeline diagnostics"]
+    id5["06b Genotyping results"]
+    id10["07 Failed genotypes"]
+    id12["08a Ancestry inputs"]
+    id14["NewHybrids"]
+    id15["NewHybrids power"]
+    id16["STRUCTURE (5 runs)"]
+    id11["08b Ancestry results"]
+
+    classDef demultiplexing fill:#F1E4DB,stroke:#8B775F,color:#2E2A26
+    classDef genotyping fill:#D7C9BE,stroke:#8B775F,color:#2E2A26
+    classDef bayes fill:#9AA582,stroke:#657359,color:#2E2A26
+    classDef results fill:#D9AF6B,stroke:#C98A4E,color:#2E2A26
+    classDef ancestry fill:#467378,stroke:#2E4A4D,color:#FFFFFF
+    classDef programs fill:#AF6458,stroke:#7E4038,color:#FFFFFF
+    class id3,id2,id1 demultiplexing
+    class id4,id6 genotyping
+    class id7,id13,id8 bayes
+    class id9,id5,id10 results
+    class id12,id11 ancestry
+    class id14,id15,id16 programs
+
+    id3 --> id2
+    id2 --> id1
+    id2 --> id4
+    id3 --> id4
+    id2 --> id6
+    id6 --> id7
+    id6 --> id13
+    id7 --> id8
+    id6 --> id8
+    id3 --> id9
+    id2 --> id9
+    id4 --> id9
+    id6 --> id9
+    id7 --> id9
+    id4 --> id5
+    id6 --> id5
+    id7 --> id5
+    id8 --> id5
+    id9 --> id5
+    id2 --> id10
+    id6 --> id10
+    id13 --> id12
+    id7 --> id12
+    id12 --> id14
+    id12 --> id15
+    id12 --> id16
+    id14 --> id11
+    id15 --> id11
+    id16 --> id11
+    id12 --> id11
+    id7 --> id11
